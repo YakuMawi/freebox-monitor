@@ -1,0 +1,12 @@
+{
+  "smtp_host": "",
+  "smtp_port": "587",
+  "smtp_user": "",
+  "smtp_password": "",
+  "smtp_from": "",
+  "alert_to": "",
+  "smtp_tls": "true",
+  "smtp_ssl": "false",
+  "alerts_enabled": "false",
+  "alert_outage_min_s": "30"
+}

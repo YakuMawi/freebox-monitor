@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Paramètres — Freebox Monitor</title>
+<style>
+:root{--bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--text:#e2e8f0;--muted:#718096;
+  --blue:#4299e1;--green:#48bb78;--red:#fc8181;--orange:#ed8936}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;padding:16px}
+a{color:var(--blue);text-decoration:none}
+
+header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var(--card);
+  border:1px solid var(--border);border-radius:12px;margin-bottom:20px}
+.h-logo{font-size:26px}
+.h-title{font-size:18px;font-weight:700;flex:1}
+.h-back{font-size:14px;color:var(--blue)}
+
+.tabs{display:flex;gap:4px;margin-bottom:20px;background:var(--card);border:1px solid var(--border);
+  border-radius:10px;padding:4px}
+.tab-btn{flex:1;padding:10px;background:transparent;border:none;color:var(--muted);
+  font-size:14px;font-weight:600;cursor:pointer;border-radius:8px;transition:all .2s}
+.tab-btn.active{background:var(--blue);color:#fff}
+.tab-btn:hover:not(.active){color:var(--text)}
+
+.tab-content{display:none}
+.tab-content.active{display:block}
+
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px}
+.card-title{font-size:16px;font-weight:700;margin-bottom:16px}
+
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+@media(max-width:600px){.form-row{grid-template-columns:1fr}}
+.form-group{margin-bottom:12px}
+.form-group label{display:block;font-size:13px;color:var(--muted);margin-bottom:4px}
+.form-group input,.form-group select{width:100%;padding:10px 12px;background:var(--bg);
+  border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;outline:none}
+.form-group input:focus{border-color:var(--blue)}
+
+.form-check{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:8px}
+.form-check input[type=checkbox]{width:16px;height:16px;accent-color:var(--blue)}
+
+.btn{padding:10px 20px;border:none;border-radius:8px;font-size:14px;font-weight:600;
+  cursor:pointer;transition:opacity .2s}
+.btn:hover{opacity:.9}
+.btn-primary{background:var(--blue);color:#fff}
+.btn-green{background:var(--green);color:#fff}
+.btn-red{background:var(--red);color:#fff}
+.btn-outline{background:transparent;border:1px solid var(--border);color:var(--text)}
+
+.alert{padding:10px 14px;border-radius:8px;font-size:13px;margin-top:12px;display:none}
+.alert-ok{background:rgba(72,187,120,.12);color:var(--green);display:block}
+.alert-err{background:rgba(252,129,129,.12);color:var(--red);display:block}
+.alert-info{background:rgba(66,153,225,.12);color:var(--blue);display:block}
+
+.version-box{display:flex;align-items:center;gap:16px;margin-bottom:16px;padding:16px;
+  background:var(--bg);border-radius:8px;border:1px solid var(--border)}
+.version-current .label{font-size:12px;color:var(--muted)}
+.version-current .value{font-size:20px;font-weight:700;color:var(--blue)}
+
+.update-result{margin-top:16px;padding:16px;background:var(--bg);border:1px solid var(--border);
+  border-radius:8px;display:none}
+.changelog{white-space:pre-wrap;font-size:13px;color:var(--muted);max-height:200px;
+  overflow-y:auto;margin-top:8px;padding:8px;background:var(--card);border-radius:6px}
+
+.user-info{padding:16px;background:var(--bg);border-radius:8px;border:1px solid var(--border);
+  margin-bottom:20px;display:flex;align-items:center;gap:12px}
+.user-avatar{width:48px;height:48px;background:var(--blue);border-radius:50%;display:flex;
+  align-items:center;justify-content:center;font-size:22px;font-weight:700;color:#fff}
+.user-name{font-size:16px;font-weight:600}
+.user-role{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="h-logo">📡</div>
+  <div class="h-title">Paramètres</div>
+  <a href="/" class="h-back">← Retour au dashboard</a>
+</header>
+
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('smtp')">Alertes SMTP</button>
+  <button class="tab-btn" onclick="switchTab('update')">Mise à jour</button>
+  <button class="tab-btn" onclick="switchTab('account')">Compte</button>
+</div>
+
+<!-- ═══════════════════════════════════════
+     ONGLET SMTP
+═══════════════════════════════════════ -->
+<div class="tab-content active" id="tab-smtp">
+  <div class="card">
+    <div class="card-title">Configuration des alertes SMTP</div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Serveur SMTP</label>
+        <input type="text" id="smtp_host" placeholder="smtp.gmail.com">
+      </div>
+      <div class="form-group">
+        <label>Port</label>
+        <input type="number" id="smtp_port" placeholder="587">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Utilisateur</label>
+        <input type="text" id="smtp_user" placeholder="user@gmail.com">
+      </div>
+      <div class="form-group">
+        <label>Mot de passe</label>
+        <input type="password" id="smtp_password" placeholder="••••••••">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Expéditeur (From)</label>
+        <input type="email" id="smtp_from" placeholder="freebox@moi.fr">
+      </div>
+      <div class="form-group">
+        <label>Destinataire (To)</label>
+        <input type="email" id="alert_to" placeholder="moi@gmail.com">
+      </div>
+    </div>
+    <div style="margin-bottom:14px">
+      <label class="form-check">
+        <input type="checkbox" id="smtp_tls"> Utiliser STARTTLS (port 587)
+      </label>
+      <label class="form-check">
+        <input type="checkbox" id="smtp_ssl"> Utiliser SSL (port 465)
+      </label>
+    </div>
+    <div style="margin-bottom:14px">
+      <label class="form-check">
+        <input type="checkbox" id="alerts_enabled"> Activer les alertes
+      </label>
+      <div class="form-group" style="margin:0">
+        <label>Délai avant alerte (secondes)</label>
+        <input type="number" id="alert_outage_min_s" placeholder="30" min="5">
+      </div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-primary" onclick="saveSmtp()">Enregistrer</button>
+      <button class="btn btn-outline" onclick="testSmtp()">Tester l'envoi</button>
+    </div>
+    <div class="alert" id="smtp-result"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     ONGLET MISE À JOUR
+═══════════════════════════════════════ -->
+<div class="tab-content" id="tab-update">
+  <div class="card">
+    <div class="card-title">Mise à jour</div>
+    <div class="version-box">
+      <div class="version-current">
+        <div class="label">Version actuelle</div>
+        <div class="value" id="current-version">...</div>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Dépôt GitHub (owner/repo)</label>
+        <input type="text" id="github_repo" placeholder="user/freebox-monitor">
+      </div>
+      <div class="form-group">
+        <label>Token GitHub (optionnel)</label>
+        <input type="password" id="github_token" placeholder="ghp_...">
+      </div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-primary" onclick="saveUpdateConfig()">Enregistrer</button>
+      <button class="btn btn-outline" onclick="checkUpdate()">Vérifier les mises à jour</button>
+    </div>
+    <div class="update-result" id="update-result">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div>
+          <span style="font-size:13px;color:var(--muted)">Dernière version :</span>
+          <strong id="latest-version" style="color:var(--green);margin-left:6px"></strong>
+        </div>
+        <button class="btn btn-green" id="btn-apply-update" onclick="applyUpdate()" style="display:none">
+          Mettre à jour
+        </button>
+      </div>
+      <div id="update-status" style="font-size:13px"></div>
+      <div class="changelog" id="update-changelog"></div>
+    </div>
+    <div class="alert" id="update-alert"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     ONGLET COMPTE
+═══════════════════════════════════════ -->
+<div class="tab-content" id="tab-account">
+  <div class="card">
+    <div class="card-title">Mon compte</div>
+    <div class="user-info">
+      <div class="user-avatar" id="user-initial">A</div>
+      <div>
+        <div class="user-name" id="user-display">admin</div>
+        <div class="user-role">Administrateur</div>
+      </div>
+    </div>
+
+    <div style="font-size:15px;font-weight:600;margin-bottom:12px">Changer le mot de passe</div>
+    <div class="form-group">
+      <label>Mot de passe actuel</label>
+      <input type="password" id="current-pw">
+    </div>
+    <div class="form-group">
+      <label>Nouveau mot de passe</label>
+      <input type="password" id="new-pw">
+    </div>
+    <div class="form-group">
+      <label>Confirmer le nouveau mot de passe</label>
+      <input type="password" id="confirm-pw">
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="btn btn-primary" onclick="changePassword()">Modifier le mot de passe</button>
+      <a href="/logout" class="btn btn-red" style="text-decoration:none;text-align:center">Déconnexion</a>
+    </div>
+    <div class="alert" id="account-result"></div>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────
+// Tab switching
+// ─────────────────────────────────────
+function switchTab(name){
+  document.querySelectorAll('.tab-btn').forEach((b,i)=>{
+    const tabs=['smtp','update','account'];
+    b.classList.toggle('active', tabs[i]===name);
+  });
+  document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
+  document.getElementById('tab-'+name).classList.add('active');
+  if(name==='update') loadVersion();
+  if(name==='smtp') loadSmtpConfig();
+  if(name==='account') loadAccount();
+}
+
+function showAlert(id, msg, type){
+  const el=document.getElementById(id);
+  el.className='alert alert-'+type;
+  el.textContent=msg;
+  el.style.display='block';
+}
+
+// ─────────────────────────────────────
+// SMTP
+// ─────────────────────────────────────
+async function loadSmtpConfig(){
+  const r=await fetch('/api/config');
+  const cfg=await r.json();
+  ['smtp_host','smtp_port','smtp_user','smtp_from','alert_to','alert_outage_min_s'].forEach(k=>{
+    const el=document.getElementById(k);
+    if(el) el.value=cfg[k]||'';
+  });
+  document.getElementById('smtp_password').value='';
+  document.getElementById('smtp_tls').checked=(cfg.smtp_tls!=='false');
+  document.getElementById('smtp_ssl').checked=(cfg.smtp_ssl==='true');
+  document.getElementById('alerts_enabled').checked=(cfg.alerts_enabled==='true');
+}
+
+async function saveSmtp(){
+  const data={};
+  ['smtp_host','smtp_port','smtp_user','smtp_from','alert_to','alert_outage_min_s'].forEach(k=>{
+    data[k]=document.getElementById(k).value;
+  });
+  const pw=document.getElementById('smtp_password').value;
+  if(pw) data.smtp_password=pw;
+  data.smtp_tls=document.getElementById('smtp_tls').checked?'true':'false';
+  data.smtp_ssl=document.getElementById('smtp_ssl').checked?'true':'false';
+  data.alerts_enabled=document.getElementById('alerts_enabled').checked?'true':'false';
+  await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+  showAlert('smtp-result','Configuration enregistrée','ok');
+}
+
+async function testSmtp(){
+  showAlert('smtp-result','Envoi en cours...','info');
+  const r=await fetch('/api/config/test-email',{method:'POST'});
+  const data=await r.json();
+  showAlert('smtp-result', data.ok?'Email envoyé avec succès':'Erreur: '+data.msg, data.ok?'ok':'err');
+}
+
+// ─────────────────────────────────────
+// Update
+// ─────────────────────────────────────
+async function loadVersion(){
+  const r=await fetch('/api/version');
+  const data=await r.json();
+  document.getElementById('current-version').textContent='v'+data.version;
+  // Load config for repo/token fields
+  const rc=await fetch('/api/config');
+  const cfg=await rc.json();
+  document.getElementById('github_repo').value=cfg.github_repo||'';
+  document.getElementById('github_token').value='';
+}
+
+async function saveUpdateConfig(){
+  const data={github_repo: document.getElementById('github_repo').value};
+  const token=document.getElementById('github_token').value;
+  if(token) data.github_token=token;
+  await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+  showAlert('update-alert','Configuration enregistrée','ok');
+}
+
+async function checkUpdate(){
+  // Save config first
+  await saveUpdateConfig();
+  document.getElementById('update-alert').style.display='none';
+  try{
+    const r=await fetch('/api/update/check');
+    const data=await r.json();
+    if(data.error){
+      showAlert('update-alert', data.error, 'err');
+      return;
+    }
+    const box=document.getElementById('update-result');
+    box.style.display='block';
+    document.getElementById('latest-version').textContent='v'+data.latest;
+    const btn=document.getElementById('btn-apply-update');
+    if(data.available){
+      document.getElementById('update-status').innerHTML=
+        '<span style="color:var(--green)">Une mise à jour est disponible !</span>';
+      btn.style.display='inline-block';
+    } else {
+      document.getElementById('update-status').innerHTML=
+        '<span style="color:var(--muted)">Vous êtes à jour.</span>';
+      btn.style.display='none';
+    }
+    document.getElementById('update-changelog').textContent=data.changelog||'Pas de changelog';
+  }catch(e){
+    showAlert('update-alert','Erreur de vérification: '+e.message,'err');
+  }
+}
+
+async function applyUpdate(){
+  if(!confirm('Appliquer la mise à jour ? Le service sera redémarré.')) return;
+  showAlert('update-alert','Mise à jour en cours...','info');
+  try{
+    const r=await fetch('/api/update/apply',{method:'POST'});
+    const data=await r.json();
+    showAlert('update-alert', data.msg, data.ok?'ok':'err');
+    if(data.ok){
+      setTimeout(()=>{ window.location.reload(); }, 5000);
+    }
+  }catch(e){
+    showAlert('update-alert','Erreur: '+e.message,'err');
+  }
+}
+
+// ─────────────────────────────────────
+// Account
+// ─────────────────────────────────────
+function loadAccount(){
+  // Display username from cookie/session — we just show a static value
+  // The server knows the user from session
+}
+
+async function changePassword(){
+  const current=document.getElementById('current-pw').value;
+  const newPw=document.getElementById('new-pw').value;
+  const confirm=document.getElementById('confirm-pw').value;
+  if(!current||!newPw){
+    showAlert('account-result','Tous les champs sont requis','err');
+    return;
+  }
+  if(newPw!==confirm){
+    showAlert('account-result','Les mots de passe ne correspondent pas','err');
+    return;
+  }
+  const r=await fetch('/api/auth/change-password',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({current_password:current, new_password:newPw})
+  });
+  const data=await r.json();
+  showAlert('account-result', data.msg, data.ok?'ok':'err');
+  if(data.ok){
+    document.getElementById('current-pw').value='';
+    document.getElementById('new-pw').value='';
+    document.getElementById('confirm-pw').value='';
+  }
+}
+
+// ─────────────────────────────────────
+// Init
+// ─────────────────────────────────────
+loadSmtpConfig();
+</script>
+</body>
+</html>

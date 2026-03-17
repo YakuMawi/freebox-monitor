@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Freebox Monitor</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--text:#e2e8f0;--muted:#718096;
+  --blue:#4299e1;--green:#48bb78;--orange:#ed8936;--red:#fc8181;--purple:#9f7aea;
+  --cyan:#76e4f7;--yellow:#f6e05e;--teal:#4fd1c5;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;padding:16px}
+a{color:var(--blue);text-decoration:none}
+
+/* Header */
+header{display:flex;align-items:center;justify-content:space-between;
+  padding:14px 20px;background:var(--card);border:1px solid var(--border);
+  border-radius:12px;margin-bottom:16px;flex-wrap:wrap;gap:10px}
+.h-left{display:flex;align-items:center;gap:12px}
+.h-logo{font-size:26px}
+.h-title{font-size:18px;font-weight:700}
+.h-sub{font-size:12px;color:var(--muted);margin-top:2px}
+.h-center{text-align:center}
+#live-date{font-size:13px;font-weight:600;color:var(--text)}
+#live-time{font-size:26px;font-weight:700;color:var(--blue);letter-spacing:2px;margin-top:2px}
+.h-right{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.status-pill{display:flex;align-items:center;gap:6px;
+  padding:6px 12px;border-radius:20px;font-size:13px;font-weight:600}
+.status-pill.online{background:rgba(72,187,120,.15);color:var(--green)}
+.status-pill.offline{background:rgba(252,129,129,.15);color:var(--red)}
+.status-dot{width:8px;height:8px;border-radius:50%;background:currentColor}
+.status-pill.online .status-dot{box-shadow:0 0 6px var(--green)}
+#last-update{font-size:11px;color:var(--muted)}
+
+/* Toolbar */
+#toolbar{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
+.btn{padding:6px 14px;border-radius:8px;border:1px solid var(--border);background:var(--card);
+  color:var(--text);font-size:12px;font-weight:600;cursor:pointer;transition:all .2s}
+.btn:hover{background:var(--border)}
+.btn-primary{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn-primary:hover{opacity:.85}
+.btn-danger{background:rgba(252,129,129,.15);border-color:var(--red);color:var(--red)}
+
+/* Tiles */
+.grid{display:grid;gap:14px}
+.g2{grid-template-columns:repeat(2,1fr)}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g4{grid-template-columns:repeat(4,1fr)}
+.g6{grid-template-columns:repeat(6,1fr)}
+
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px}
+.card-title{font-size:11px;font-weight:600;text-transform:uppercase;
+  letter-spacing:.08em;color:var(--muted);margin-bottom:12px}
+
+.metric-card{text-align:center}
+.metric-icon{font-size:24px;margin-bottom:6px}
+.metric-value{font-size:26px;font-weight:700;line-height:1}
+.metric-label{font-size:12px;color:var(--muted);margin-top:4px}
+.metric-sub{font-size:11px;color:var(--muted);margin-top:2px}
+
+/* Progress bar */
+.pb{height:5px;background:var(--border);border-radius:3px;margin-top:8px;overflow:hidden}
+.pb-fill{height:100%;border-radius:3px;transition:width .5s}
+
+/* Info rows */
+.info-row{display:flex;justify-content:space-between;align-items:center;
+  padding:7px 0;border-bottom:1px solid var(--border);font-size:13px}
+.info-row:last-child{border-bottom:none}
+.info-key{color:var(--muted);flex-shrink:0;margin-right:8px}
+.info-val{font-weight:600;text-align:right;word-break:break-all}
+
+/* Badge */
+.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600}
+.bg{background:rgba(72,187,120,.15);color:var(--green)}
+.br{background:rgba(252,129,129,.15);color:var(--red)}
+.bb{background:rgba(66,153,225,.15);color:var(--blue)}
+.bo{background:rgba(237,137,54,.15);color:var(--orange)}
+
+/* Charts */
+.chart-wrap{position:relative;height:200px}
+
+/* Sensor grid */
+.sensor-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:4px}
+.sensor-item{background:rgba(255,255,255,.03);border-radius:8px;padding:10px}
+.sensor-name{font-size:11px;color:var(--muted);margin-bottom:4px}
+.sensor-val{font-size:18px;font-weight:700}
+.fan-item{display:flex;align-items:center;gap:12px;padding:10px 0;
+  border-bottom:1px solid var(--border)}
+.fan-item:last-child{border-bottom:none}
+.fan-name{color:var(--muted);font-size:13px;flex:1}
+.fan-val{font-size:18px;font-weight:700;color:var(--cyan)}
+
+/* Calendar */
+#calendar-nav{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+#cal-month-label{font-weight:700;min-width:140px;text-align:center}
+.cal-table{width:100%;border-collapse:separate;border-spacing:3px}
+.cal-table th{font-size:11px;color:var(--muted);text-align:center;padding:4px}
+.cal-table td{text-align:center;border-radius:6px;padding:0;cursor:default;
+  font-size:11px;font-weight:600;min-width:36px}
+.cal-table td div{padding:6px 4px}
+.cal-table td.empty{background:transparent}
+.cal-legend{display:flex;gap:12px;margin-top:8px;flex-wrap:wrap;align-items:center}
+.cal-legend-item{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted)}
+.cal-legend-box{width:14px;height:14px;border-radius:3px}
+
+/* Tabs */
+.tab-bar{display:flex;gap:4px;margin-bottom:14px;flex-wrap:wrap}
+.tab-btn{padding:5px 14px;border-radius:6px;border:1px solid var(--border);
+  background:transparent;color:var(--muted);font-size:12px;cursor:pointer}
+.tab-btn.active{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:600}
+
+/* Stats table */
+.stats-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.stat-box{background:rgba(255,255,255,.03);border-radius:8px;padding:12px;text-align:center}
+.stat-box .val{font-size:20px;font-weight:700;color:var(--blue)}
+.stat-box .lbl{font-size:11px;color:var(--muted);margin-top:4px}
+
+/* Switch table */
+.data-table{width:100%;border-collapse:collapse;font-size:12px}
+.data-table th{padding:8px;text-align:left;color:var(--muted);border-bottom:1px solid var(--border);font-weight:600}
+.data-table td{padding:7px 8px;border-bottom:1px solid var(--border)}
+.data-table tr:last-child td{border-bottom:none}
+.dot-green{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);margin-right:4px}
+.dot-gray{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--muted);margin-right:4px}
+
+/* Storage bar */
+.storage-bar{height:8px;background:var(--border);border-radius:4px;overflow:hidden;margin-top:4px}
+.storage-fill{height:100%;border-radius:4px;transition:width .5s}
+
+/* Modal */
+.modal-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;
+  align-items:center;justify-content:center}
+.modal-backdrop.open{display:flex}
+.modal{background:var(--card);border:1px solid var(--border);border-radius:16px;
+  padding:28px;max-width:540px;width:90%;max-height:90vh;overflow-y:auto}
+.modal h3{font-size:17px;font-weight:700;margin-bottom:20px}
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:600}
+.form-group input,.form-group select{width:100%;background:#0f1117;border:1px solid var(--border);
+  border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px}
+.form-group input:focus,.form-group select:focus{outline:none;border-color:var(--blue)}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.form-check{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}
+.form-check input{width:auto;cursor:pointer}
+
+
+/* Tile selector */
+#tile-selector{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}
+.tile-toggle-btn{padding:6px 12px;border-radius:20px;border:1px solid var(--border);
+  background:var(--card);color:var(--muted);font-size:12px;cursor:pointer}
+.tile-toggle-btn.active{background:rgba(66,153,225,.15);border-color:var(--blue);color:var(--blue)}
+
+/* Hidden tile */
+.tile-section{transition:opacity .3s}
+.tile-section.hidden{display:none}
+
+/* Error banner */
+#error-banner{display:none;background:rgba(252,129,129,.1);border:1px solid var(--red);
+  color:var(--red);padding:10px 16px;border-radius:8px;margin-bottom:14px;font-size:13px}
+
+/* Value colors */
+.vc-blue{color:var(--blue)} .vc-green{color:var(--green)} .vc-orange{color:var(--orange)}
+.vc-red{color:var(--red)} .vc-purple{color:var(--purple)} .vc-cyan{color:var(--cyan)}
+.vc-yellow{color:var(--yellow)} .vc-teal{color:var(--teal)}
+
+/* Responsive */
+@media(max-width:1100px){.g6{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:800px){.g4,.g3,.g6{grid-template-columns:repeat(2,1fr)}.g2{grid-template-columns:1fr}}
+@media(max-width:520px){.g4,.g3,.g6,.g2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="h-left">
+    <div class="h-logo">📡</div>
+    <div>
+      <div class="h-title">Freebox Monitor</div>
+      <div class="h-sub" id="h-board">Freebox Delta S</div>
+    </div>
+  </div>
+  <div class="h-center">
+    <div id="live-date">—</div>
+    <div id="live-time">—</div>
+  </div>
+  <div class="h-right">
+    <div>
+      <div class="status-pill offline" id="status-pill">
+        <div class="status-dot"></div>
+        <span id="status-text">—</span>
+      </div>
+      <div id="last-update" style="margin-top:4px">Chargement...</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px">
+      <a href="/settings" class="btn btn-primary" style="text-decoration:none">⚙ Paramètres</a>
+      <button class="btn" onclick="openReportModal()">📄 Rapport</button>
+    </div>
+  </div>
+</header>
+
+<div id="error-banner"></div>
+
+<!-- TOOLBAR -->
+<div id="toolbar">
+  <span style="font-size:12px;color:var(--muted);font-weight:600">Tuiles :</span>
+  <button class="btn" onclick="toggleAllTiles(true)">Tout afficher</button>
+  <button class="btn" onclick="toggleAllTiles(false)">Tout masquer</button>
+  <div id="tile-selector"></div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     KPI TILES
+═══════════════════════════════════════════ -->
+<div class="tile-section grid g6" id="tile-kpi" style="margin-bottom:14px">
+
+  <div class="card metric-card">
+    <div class="metric-icon">⬇️</div>
+    <div class="metric-value vc-blue" id="rate-down">—</div>
+    <div class="metric-label">Débit descendant</div>
+    <div class="metric-sub" id="bw-down">max —</div>
+    <div class="pb"><div class="pb-fill" id="pb-down" style="background:var(--blue);width:0%"></div></div>
+  </div>
+
+  <div class="card metric-card">
+    <div class="metric-icon">⬆️</div>
+    <div class="metric-value vc-green" id="rate-up">—</div>
+    <div class="metric-label">Débit montant</div>
+    <div class="metric-sub" id="bw-up">max —</div>
+    <div class="pb"><div class="pb-fill" id="pb-up" style="background:var(--green);width:0%"></div></div>
+  </div>
+
+  <div class="card metric-card">
+    <div class="metric-icon">🌡️</div>
+    <div class="metric-value" id="temp-cpu-main" style="color:var(--orange)">—</div>
+    <div class="metric-label">CPU CP Master</div>
+    <div class="metric-sub" id="temp-cpu-ap-sub">AP: —</div>
+    <div class="pb"><div class="pb-fill" id="pb-temp" style="background:var(--orange);width:0%"></div></div>
+  </div>
+
+  <div class="card metric-card">
+    <div class="metric-icon">💨</div>
+    <div class="metric-value vc-cyan" id="fan-main">—</div>
+    <div class="metric-label">Ventilateur 1</div>
+    <div class="metric-sub" id="fan2-sub">Fan 2: —</div>
+  </div>
+
+  <div class="card metric-card">
+    <div class="metric-icon">💻</div>
+    <div class="metric-value vc-purple" id="active-hosts">—</div>
+    <div class="metric-label">Appareils connectés</div>
+    <div class="metric-sub">réseau local</div>
+  </div>
+
+  <div class="card metric-card">
+    <div class="metric-icon">⏱️</div>
+    <div class="metric-value vc-teal" id="uptime-tile" style="font-size:18px">—</div>
+    <div class="metric-label">Uptime</div>
+    <div class="metric-sub" id="firmware-sub">firmware —</div>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════
+     CHARTS
+═══════════════════════════════════════════ -->
+<div class="tile-section grid g2" id="tile-charts" style="margin-bottom:14px">
+  <div class="card">
+    <div class="card-title">Débit temps réel (Mbit/s)</div>
+    <div class="chart-wrap"><canvas id="chart-bw"></canvas></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Températures (°C)</div>
+    <div class="chart-wrap"><canvas id="chart-temp"></canvas></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     STATS PAR PÉRIODE
+═══════════════════════════════════════════ -->
+<div class="tile-section card" id="tile-period" style="margin-bottom:14px">
+  <div class="card-title">Statistiques par période</div>
+  <div class="tab-bar">
+    <button class="tab-btn active" data-period="24h"  onclick="setPeriod('24h',this)">24 h</button>
+    <button class="tab-btn"        data-period="7j"   onclick="setPeriod('7j',this)">7 jours</button>
+    <button class="tab-btn"        data-period="30j"  onclick="setPeriod('30j',this)">30 jours</button>
+    <button class="tab-btn"        data-period="60j"  onclick="setPeriod('60j',this)">60 jours</button>
+    <button class="tab-btn"        data-period="90j"  onclick="setPeriod('90j',this)">90 jours</button>
+    <button class="tab-btn"        data-period="1an"  onclick="setPeriod('1an',this)">1 an</button>
+  </div>
+  <div class="stats-grid" id="period-stats-grid">
+    <div class="stat-box"><div class="val" id="ps-uptime">—</div><div class="lbl">Disponibilité</div></div>
+    <div class="stat-box"><div class="val" id="ps-outages">—</div><div class="lbl">Coupures</div></div>
+    <div class="stat-box"><div class="val" id="ps-outage-dur">—</div><div class="lbl">Durée totale coupures</div></div>
+    <div class="stat-box"><div class="val" id="ps-avg-down">—</div><div class="lbl">Débit desc. moyen</div></div>
+    <div class="stat-box"><div class="val" id="ps-max-down">—</div><div class="lbl">Débit desc. max</div></div>
+    <div class="stat-box"><div class="val" id="ps-avg-up">—</div><div class="lbl">Débit mont. moyen</div></div>
+    <div class="stat-box"><div class="val" id="ps-bytes-down">—</div><div class="lbl">Données téléchargées</div></div>
+    <div class="stat-box"><div class="val" id="ps-bytes-up">—</div><div class="lbl">Données envoyées</div></div>
+    <div class="stat-box"><div class="val" id="ps-avg-temp">—</div><div class="lbl">Temp CPU moy.</div></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     INFO CARDS
+═══════════════════════════════════════════ -->
+<div class="tile-section grid g3" id="tile-infos" style="margin-bottom:14px">
+
+  <div class="card">
+    <div class="card-title">Système</div>
+    <div class="info-row"><span class="info-key">Modèle</span><span class="info-val" id="sys-board">—</span></div>
+    <div class="info-row"><span class="info-key">Firmware</span><span class="info-val" id="sys-fw">—</span></div>
+    <div class="info-row"><span class="info-key">Uptime</span><span class="info-val" id="sys-uptime">—</span></div>
+    <div class="info-row"><span class="info-key">Disque</span><span class="info-val" id="sys-disk">—</span></div>
+    <div class="info-row"><span class="info-key">Temp. HDD</span><span class="info-val" id="sys-hdd0">—</span></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Connexion</div>
+    <div class="info-row"><span class="info-key">Statut</span><span class="info-val" id="conn-state">—</span></div>
+    <div class="info-row"><span class="info-key">Type / Média</span><span class="info-val" id="conn-type">—</span></div>
+    <div class="info-row"><span class="info-key">IPv4</span><span class="info-val" id="conn-ipv4">—</span></div>
+    <div class="info-row"><span class="info-key">IPv6</span><span class="info-val" id="conn-ipv6" style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis">—</span></div>
+    <div class="info-row"><span class="info-key">Bande passante ↓</span><span class="info-val" id="conn-bw-d">—</span></div>
+    <div class="info-row"><span class="info-key">Bande passante ↑</span><span class="info-val" id="conn-bw-u">—</span></div>
+    <div class="info-row"><span class="info-key">Total ↓</span><span class="info-val" id="conn-bytes-d">—</span></div>
+    <div class="info-row"><span class="info-key">Total ↑</span><span class="info-val" id="conn-bytes-u">—</span></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Fibre optique (FTTH)</div>
+    <div id="ftth-unavail" style="color:var(--muted);font-size:13px;display:none">Non disponible</div>
+    <div id="ftth-content">
+      <div class="info-row"><span class="info-key">Lien</span><span class="info-val" id="ftth-link">—</span></div>
+      <div class="info-row"><span class="info-key">Signal SFP</span><span class="info-val" id="ftth-signal">—</span></div>
+      <div class="info-row"><span class="info-key">Puissance TX</span><span class="info-val" id="ftth-tx">—</span></div>
+      <div class="info-row"><span class="info-key">Puissance RX</span><span class="info-val" id="ftth-rx">—</span></div>
+      <div class="info-row"><span class="info-key">Modèle SFP</span><span class="info-val" id="ftth-model">—</span></div>
+      <div class="info-row"><span class="info-key">Fabricant</span><span class="info-val" id="ftth-vendor">—</span></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════
+     TEMPÉRATURES + VENTILATEURS
+═══════════════════════════════════════════ -->
+<div class="tile-section grid g2" id="tile-hw" style="margin-bottom:14px">
+
+  <div class="card">
+    <div class="card-title">Capteurs de température</div>
+    <div class="sensor-grid" id="sensors-grid"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Ventilateurs</div>
+    <div id="fans-list"></div>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════
+     CALENDRIER
+═══════════════════════════════════════════ -->
+<div class="tile-section card" id="tile-calendar" style="margin-bottom:14px">
+  <div class="card-title">Calendrier de disponibilité</div>
+  <div id="calendar-nav">
+    <button class="btn" onclick="calNav(-1)">‹</button>
+    <span id="cal-month-label">—</span>
+    <button class="btn" onclick="calNav(+1)">›</button>
+  </div>
+  <table class="cal-table" id="cal-table">
+    <thead><tr>
+      <th>Lun</th><th>Mar</th><th>Mer</th><th>Jeu</th><th>Ven</th><th>Sam</th><th>Dim</th>
+    </tr></thead>
+    <tbody id="cal-body"></tbody>
+  </table>
+  <div class="cal-legend">
+    <span style="font-size:11px;color:var(--muted)">Légende:</span>
+    <div class="cal-legend-item"><div class="cal-legend-box" style="background:#276749"></div>100%</div>
+    <div class="cal-legend-item"><div class="cal-legend-box" style="background:#48bb78"></div>≥95%</div>
+    <div class="cal-legend-item"><div class="cal-legend-box" style="background:#ed8936"></div>≥80%</div>
+    <div class="cal-legend-item"><div class="cal-legend-box" style="background:#fc8181"></div>&lt;80%</div>
+    <div class="cal-legend-item"><div class="cal-legend-box" style="background:#2a2d3a"></div>Pas de données</div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     SWITCH PORTS
+═══════════════════════════════════════════ -->
+<div class="tile-section card" id="tile-switch" style="margin-bottom:14px">
+  <div class="card-title">Ports Switch</div>
+  <table class="data-table">
+    <thead><tr>
+      <th>Port</th><th>Lien</th><th>Vitesse</th><th>RX (octets)</th><th>TX (octets)</th><th>Erreurs RX</th>
+    </tr></thead>
+    <tbody id="switch-body"></tbody>
+  </table>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     STOCKAGE
+═══════════════════════════════════════════ -->
+<div class="tile-section card" id="tile-storage" style="margin-bottom:14px">
+  <div class="card-title">Stockage</div>
+  <div id="storage-content"></div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     JOURNAL DES COUPURES
+═══════════════════════════════════════════ -->
+<div class="tile-section card" id="tile-outages" style="margin-bottom:14px">
+  <div class="card-title">Journal des coupures</div>
+  <table class="data-table">
+    <thead><tr><th>Début</th><th>Fin</th><th>Durée</th><th>Cause</th></tr></thead>
+    <tbody id="outages-body"></tbody>
+  </table>
+  <div style="margin-top:10px">
+    <button class="btn" id="btn-more-outages" onclick="loadMoreOutages()">Charger plus</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     MODAL RAPPORT
+═══════════════════════════════════════════ -->
+<div class="modal-backdrop" id="report-modal">
+  <div class="modal">
+    <h3>📄 Rapport mensuel</h3>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Année</label>
+        <input type="number" id="rep-year" value="">
+      </div>
+      <div class="form-group">
+        <label>Mois</label>
+        <select id="rep-month">
+          <option value="1">Janvier</option><option value="2">Février</option>
+          <option value="3">Mars</option><option value="4">Avril</option>
+          <option value="5">Mai</option><option value="6">Juin</option>
+          <option value="7">Juillet</option><option value="8">Août</option>
+          <option value="9">Septembre</option><option value="10">Octobre</option>
+          <option value="11">Novembre</option><option value="12">Décembre</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn btn-primary" onclick="openReport()">Ouvrir le rapport</button>
+      <button class="btn" onclick="document.getElementById('report-modal').classList.remove('open')">Fermer</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────
+// Tile system
+// ─────────────────────────────────────────
+const TILES = [
+  {id:'tile-kpi',      label:'KPI temps réel'},
+  {id:'tile-charts',   label:'Graphiques'},
+  {id:'tile-period',   label:'Stats période'},
+  {id:'tile-infos',    label:'Infos système'},
+  {id:'tile-hw',       label:'Températures'},
+  {id:'tile-calendar', label:'Calendrier'},
+  {id:'tile-switch',   label:'Switch'},
+  {id:'tile-storage',  label:'Stockage'},
+  {id:'tile-outages',  label:'Coupures'},
+];
+const PREF_KEY = 'fbx_tiles_v2';
+
+function loadPrefs(){
+  try{ return JSON.parse(localStorage.getItem(PREF_KEY))||{}; }catch{ return {}; }
+}
+function savePrefs(p){ localStorage.setItem(PREF_KEY, JSON.stringify(p)); }
+
+function buildTileSelector(){
+  const prefs = loadPrefs();
+  const bar = document.getElementById('tile-selector');
+  bar.innerHTML = '';
+  TILES.forEach(t=>{
+    const visible = prefs[t.id] !== false;
+    const btn = document.createElement('button');
+    btn.className = 'tile-toggle-btn' + (visible?' active':'');
+    btn.textContent = t.label;
+    btn.onclick = ()=>{ toggleTile(t.id); };
+    btn.id = 'tb-' + t.id;
+    bar.appendChild(btn);
+    const el = document.getElementById(t.id);
+    if(el) el.classList.toggle('hidden', !visible);
+  });
+}
+
+function toggleTile(id){
+  const prefs = loadPrefs();
+  const el = document.getElementById(id);
+  const btn = document.getElementById('tb-'+id);
+  const visible = el && !el.classList.contains('hidden');
+  if(el) el.classList.toggle('hidden', visible);
+  if(btn) btn.classList.toggle('active', !visible);
+  prefs[id] = !visible;
+  savePrefs(prefs);
+}
+
+function toggleAllTiles(show){
+  const prefs = loadPrefs();
+  TILES.forEach(t=>{
+    const el = document.getElementById(t.id);
+    const btn = document.getElementById('tb-'+t.id);
+    if(el){ el.classList.toggle('hidden',!show); }
+    if(btn){ btn.classList.toggle('active',show); }
+    prefs[t.id] = show;
+  });
+  savePrefs(prefs);
+}
+
+// ─────────────────────────────────────────
+// Live clock
+// ─────────────────────────────────────────
+const DAY_NAMES = ['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
+const MON_NAMES = ['Janvier','Février','Mars','Avril','Mai','Juin',
+                   'Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+function startClock(){
+  function tick(){
+    const n = new Date();
+    document.getElementById('live-date').textContent =
+      DAY_NAMES[n.getDay()]+' '+n.getDate()+' '+MON_NAMES[n.getMonth()]+' '+n.getFullYear();
+    document.getElementById('live-time').textContent =
+      String(n.getHours()).padStart(2,'0')+':'+
+      String(n.getMinutes()).padStart(2,'0')+':'+
+      String(n.getSeconds()).padStart(2,'0');
+  }
+  tick(); setInterval(tick,1000);
+}
+
+// ─────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────
+function setText(id,v){ const e=document.getElementById(id); if(e) e.textContent=(v??'—'); }
+function setHTML(id,v){ const e=document.getElementById(id); if(e) e.innerHTML=(v??'—'); }
+function badge(ok,t,f){ return ok?`<span class="badge bg">${t}</span>`:`<span class="badge br">${f}</span>`; }
+function fmtBps(bps){
+  const b=bps*8;
+  if(b>=1e9) return (b/1e9).toFixed(1)+' Gbit/s';
+  if(b>=1e6) return (b/1e6).toFixed(1)+' Mbit/s';
+  if(b>=1e3) return (b/1e3).toFixed(0)+' Kbit/s';
+  return b+' bit/s';
+}
+function fmtBytes(b){
+  if(b>=1e12) return (b/1e12).toFixed(2)+' To';
+  if(b>=1e9)  return (b/1e9).toFixed(1)+' Go';
+  if(b>=1e6)  return (b/1e6).toFixed(0)+' Mo';
+  return (b/1e3).toFixed(0)+' Ko';
+}
+function tempColor(t){
+  if(t>=85) return 'var(--red)';
+  if(t>=70) return 'var(--orange)';
+  if(t>=55) return 'var(--yellow)';
+  return 'var(--green)';
+}
+
+// ─────────────────────────────────────────
+// Charts
+// ─────────────────────────────────────────
+const cDef = {
+  responsive:true, maintainAspectRatio:false,
+  animation:{duration:400},
+  plugins:{legend:{labels:{color:'#718096',boxWidth:12,font:{size:11}}}},
+  scales:{
+    x:{ticks:{color:'#718096',maxTicksLimit:6,font:{size:10}},grid:{color:'#2a2d3a'}},
+    y:{ticks:{color:'#718096',font:{size:10}},grid:{color:'#2a2d3a'},beginAtZero:true},
+  }
+};
+
+const bwChart = new Chart(document.getElementById('chart-bw'),{
+  type:'line',
+  data:{labels:[],datasets:[
+    {label:'↓ Desc',data:[],borderColor:'#4299e1',backgroundColor:'rgba(66,153,225,.1)',tension:.4,fill:true,pointRadius:0},
+    {label:'↑ Mont',data:[],borderColor:'#48bb78',backgroundColor:'rgba(72,187,120,.1)',tension:.4,fill:true,pointRadius:0},
+  ]},
+  options:{...cDef}
+});
+
+const tempChart = new Chart(document.getElementById('chart-temp'),{
+  type:'line',
+  data:{labels:[],datasets:[
+    {label:'CPU Master',data:[],borderColor:'#fc8181',backgroundColor:'rgba(252,129,129,.05)',tension:.4,fill:false,pointRadius:0},
+    {label:'CPU AP',    data:[],borderColor:'#ed8936',backgroundColor:'rgba(237,137,54,.05)',tension:.4,fill:false,pointRadius:0},
+    {label:'CPU Slave', data:[],borderColor:'#f6e05e',backgroundColor:'rgba(246,224,94,.05)',tension:.4,fill:false,pointRadius:0},
+    {label:'Temp T1',   data:[],borderColor:'#4299e1',backgroundColor:'rgba(66,153,225,.05)',tension:.4,fill:false,pointRadius:0},
+    {label:'Temp T2',   data:[],borderColor:'#76e4f7',backgroundColor:'rgba(118,228,247,.05)',tension:.4,fill:false,pointRadius:0},
+    {label:'Temp T3',   data:[],borderColor:'#9f7aea',backgroundColor:'rgba(159,122,234,.05)',tension:.4,fill:false,pointRadius:0},
+    {label:'HDD',       data:[],borderColor:'#4fd1c5',backgroundColor:'rgba(79,209,197,.05)',tension:.4,fill:false,pointRadius:0},
+  ]},
+  options:{...cDef, scales:{...cDef.scales, y:{...cDef.scales.y, suggestedMax:90}}}
+});
+
+// ─────────────────────────────────────────
+// Update UI from metrics
+// ─────────────────────────────────────────
+function updateUI(m){
+  const conn = m.connection||{};
+  const sys  = m.system||{};
+  const lan  = m.lan||{};
+  const ftth = m.ftth;
+  const sens = sys.sensors||{};
+  const fans = sys.fans||{};
+
+  // Error banner
+  const eb = document.getElementById('error-banner');
+  eb.style.display = m.error ? 'block' : 'none';
+  if(m.error) eb.textContent = '⚠ '+m.error;
+
+  // Header status
+  setText('last-update','Actualisé à '+(m.collected_at||'—'));
+  const pill = document.getElementById('status-pill');
+  const online = conn.state==='up';
+  pill.className = 'status-pill '+(online?'online':'offline');
+  setText('status-text', online?'En ligne':(conn.state||'—'));
+  setText('h-board', sys.board||'Freebox Delta S');
+
+  // KPI tiles
+  setText('rate-down', conn.rate_down_fmt||'—');
+  setText('rate-up',   conn.rate_up_fmt||'—');
+  setText('bw-down',   conn.bandwidth_down_fmt?'max '+conn.bandwidth_down_fmt:'—');
+  setText('bw-up',     conn.bandwidth_up_fmt?'max '+conn.bandwidth_up_fmt:'—');
+
+  if(conn.bandwidth_down>0)
+    document.getElementById('pb-down').style.width = Math.min(100,conn.rate_down/conn.bandwidth_down*100)+'%';
+  if(conn.bandwidth_up>0)
+    document.getElementById('pb-up').style.width = Math.min(100,conn.rate_up/conn.bandwidth_up*100)+'%';
+
+  const cpuM = sys.temp_cpu_cp_master||0;
+  const cpuAP = sys.temp_cpu_ap||0;
+  const cpuEl = document.getElementById('temp-cpu-main');
+  if(cpuEl){ cpuEl.textContent = cpuM?cpuM+'°C':'—'; cpuEl.style.color=tempColor(cpuM); }
+  setText('temp-cpu-ap-sub','AP: '+(cpuAP?cpuAP+'°C':'—'));
+  document.getElementById('pb-temp').style.width=Math.min(100,cpuM)+'%';
+  document.getElementById('pb-temp').style.background=tempColor(cpuM);
+
+  setText('fan-main',  (sys.fan0_speed||0)+(sys.fan0_speed?' RPM':'—'));
+  setText('fan2-sub',  'Fan 2: '+(sys.fan1_speed?sys.fan1_speed+' RPM':'—'));
+  setText('active-hosts', lan.active_hosts??'—');
+  const utEl = document.getElementById('uptime-tile');
+  if(utEl){ utEl.textContent=sys.uptime||'—'; }
+  setText('firmware-sub','firmware '+(sys.firmware||'—'));
+
+  // System info
+  setText('sys-board',  sys.board||'—');
+  setText('sys-fw',     sys.firmware||'—');
+  setText('sys-uptime', sys.uptime||'—');
+  setHTML('sys-disk',   badge(sys.disk_status==='active','Actif',sys.disk_status||'—'));
+  setText('sys-hdd0',   (sys.temp_hdd0?sys.temp_hdd0+'°C':'—'));
+
+  // Connection
+  setHTML('conn-state', badge(conn.state==='up','Connecté',conn.state||'—'));
+  setText('conn-type',    (conn.type||'—')+(conn.media?' / '+conn.media:''));
+  setText('conn-ipv4',    conn.ipv4||'—');
+  setText('conn-ipv6',    conn.ipv6||'—');
+  setText('conn-bw-d',    conn.bandwidth_down_fmt||'—');
+  setText('conn-bw-u',    conn.bandwidth_up_fmt||'—');
+  setText('conn-bytes-d', conn.bytes_down_fmt||'—');
+  setText('conn-bytes-u', conn.bytes_up_fmt||'—');
+
+  // FTTH
+  if(ftth){
+    document.getElementById('ftth-unavail').style.display='none';
+    document.getElementById('ftth-content').style.display='block';
+    setHTML('ftth-link',   badge(ftth.link,'Actif','Inactif'));
+    setHTML('ftth-signal', badge(ftth.sfp_has_signal,'Présent','Absent'));
+    setText('ftth-tx',     ftth.sfp_pwr_tx!=null?ftth.sfp_pwr_tx+' dBm':'—');
+    setText('ftth-rx',     ftth.sfp_pwr_rx!=null?ftth.sfp_pwr_rx+' dBm':'—');
+    setText('ftth-model',  ftth.sfp_model||'—');
+    setText('ftth-vendor', ftth.sfp_vendor||'—');
+  } else {
+    document.getElementById('ftth-unavail').style.display='block';
+    document.getElementById('ftth-content').style.display='none';
+  }
+
+  // Sensors grid
+  const sg = document.getElementById('sensors-grid');
+  const sensorMap = [
+    {key:'temp_cpu_cp_master', label:'CPU CP Master'},
+    {key:'temp_cpu_ap',        label:'CPU AP'},
+    {key:'temp_cpu_cp_slave',  label:'CPU CP Slave'},
+    {key:'temp_t1',            label:'Température 1'},
+    {key:'temp_t2',            label:'Température 2'},
+    {key:'temp_t3',            label:'Température 3'},
+    {key:'temp_hdd0',          label:'Disque dur 1'},
+  ];
+  sg.innerHTML = sensorMap.map(s=>{
+    const v = sys[s.key]||0;
+    return `<div class="sensor-item">
+      <div class="sensor-name">${s.label}</div>
+      <div class="sensor-val" style="color:${tempColor(v)}">${v?v+'°C':'—'}</div>
+    </div>`;
+  }).join('');
+
+  // Fans
+  const fl = document.getElementById('fans-list');
+  const fanMap=[
+    {key:'fan0_speed',label:'Ventilateur 1'},
+    {key:'fan1_speed',label:'Ventilateur 2'},
+  ];
+  fl.innerHTML = fanMap.map(f=>{
+    const v=sys[f.key]||0;
+    return `<div class="fan-item">
+      <div class="fan-name">💨 ${f.label}</div>
+      <div class="fan-val">${v?v+' RPM':'—'}</div>
+    </div>`;
+  }).join('');
+}
+
+// ─────────────────────────────────────────
+// History → charts
+// ─────────────────────────────────────────
+function updateCharts(rows){
+  if(!rows||!rows.length) return;
+  const labels=[], down=[], up=[], cpuM=[], cpuAP=[], cpuS=[], t1=[], t2=[], t3=[], hdd=[];
+  rows.forEach(r=>{
+    const ts = new Date(r.ts*1000);
+    labels.push(ts.getHours().toString().padStart(2,'0')+':'+
+                ts.getMinutes().toString().padStart(2,'0')+':'+
+                ts.getSeconds().toString().padStart(2,'0'));
+    down.push(+(r.rate_down*8/1e6).toFixed(2));
+    up.push(+(r.rate_up*8/1e6).toFixed(2));
+    cpuM.push(r.temp_cpu_master||0);
+    cpuAP.push(r.temp_cpu_ap||0);
+    cpuS.push(r.temp_cpu_slave||0);
+    t1.push(r.temp_t1||0);
+    t2.push(r.temp_t2||0);
+    t3.push(r.temp_t3||0);
+    hdd.push(r.temp_hdd0||0);
+  });
+  bwChart.data.labels=labels;
+  bwChart.data.datasets[0].data=down;
+  bwChart.data.datasets[1].data=up;
+  bwChart.update('none');
+  tempChart.data.labels=labels;
+  [cpuM,cpuAP,cpuS,t1,t2,t3,hdd].forEach((d,i)=>tempChart.data.datasets[i].data=d);
+  tempChart.update('none');
+}
+
+// ─────────────────────────────────────────
+// Period stats
+// ─────────────────────────────────────────
+let activePeriod='24h';
+function setPeriod(p,btn){
+  activePeriod=p;
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  fetchStats();
+}
+function updateStats(s){
+  const f=fmtBps;
+  setText('ps-uptime',    s.uptime_pct!=null?s.uptime_pct+'%':'—');
+  setText('ps-outages',   s.outage_count??'—');
+  setText('ps-outage-dur',s.outage_total_fmt||'—');
+  setText('ps-avg-down',  s.avg_down!=null?f(s.avg_down):'—');
+  setText('ps-max-down',  s.max_down!=null?f(s.max_down):'—');
+  setText('ps-avg-up',    s.avg_up!=null?f(s.avg_up):'—');
+  setText('ps-bytes-down',s.delta_bytes_down!=null?fmtBytes(s.delta_bytes_down):'—');
+  setText('ps-bytes-up',  s.delta_bytes_up!=null?fmtBytes(s.delta_bytes_up):'—');
+  setText('ps-avg-temp',  s.avg_temp!=null?s.avg_temp.toFixed(1)+'°C':'—');
+}
+
+// ─────────────────────────────────────────
+// Calendar
+// ─────────────────────────────────────────
+let calYear=new Date().getFullYear(), calMonth=new Date().getMonth()+1;
+const MON=['Janvier','Février','Mars','Avril','Mai','Juin',
+           'Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+
+function calNav(d){ calMonth+=d; if(calMonth>12){calMonth=1;calYear++;} if(calMonth<1){calMonth=12;calYear--;} fetchCalendar(); }
+
+function uptimeColor(pct){
+  if(pct==null) return '#2a2d3a';
+  if(pct>=99) return '#276749';
+  if(pct>=95) return '#48bb78';
+  if(pct>=80) return '#ed8936';
+  return '#fc8181';
+}
+
+function renderCalendar(data){
+  setText('cal-month-label', MON[calMonth-1]+' '+calYear);
+  const y=calYear, m=calMonth;
+  const firstDay=new Date(y,m-1,1).getDay(); // 0=Sun
+  const daysInMonth=new Date(y,m,0).getDate();
+  // Convert Sunday=0 to Monday=0
+  const startOffset=(firstDay+6)%7;
+  const tbody=document.getElementById('cal-body');
+  tbody.innerHTML='';
+  let day=1;
+  for(let week=0;week<6;week++){
+    const tr=document.createElement('tr');
+    let anyDay=false;
+    for(let dow=0;dow<7;dow++){
+      const td=document.createElement('td');
+      const cellIdx=week*7+dow;
+      if(cellIdx<startOffset||day>daysInMonth){
+        td.className='empty';
+      } else {
+        anyDay=true;
+        const ds=y+'-'+String(m).padStart(2,'0')+'-'+String(day).padStart(2,'0');
+        const d=data[ds];
+        const pct=d?d.uptime_pct:null;
+        td.style.background=uptimeColor(pct);
+        td.style.color='#fff';
+        const tip=d?`${ds}\nDisponibilité: ${pct}%\nDébit moy ↓: ${fmtBps(d.avg_down||0)}`:`${ds}\nPas de données`;
+        td.title=tip;
+        td.innerHTML=`<div><div style="font-weight:700">${day}</div><div style="font-size:10px;opacity:.75">${pct!=null?pct+'%':'—'}</div></div>`;
+        day++;
+      }
+      tr.appendChild(td);
+    }
+    if(anyDay||week===0) tbody.appendChild(tr);
+    if(day>daysInMonth) break;
+  }
+}
+
+// ─────────────────────────────────────────
+// Switch + Storage
+// ─────────────────────────────────────────
+function updateSwitch(ports){
+  const tb=document.getElementById('switch-body');
+  if(!ports||!ports.length){ tb.innerHTML='<tr><td colspan="6" style="color:var(--muted)">Aucun port</td></tr>'; return; }
+  tb.innerHTML=ports.map(p=>`
+    <tr>
+      <td>${p.name||'Port '+p.id}</td>
+      <td><span class="${p.link==='up'?'dot-green':'dot-gray'}"></span>${p.link||'—'}</td>
+      <td>${p.speed?p.speed+' Mbps':p.link==='up'?'—':'down'}</td>
+      <td>${p.rx_bytes?fmtBytes(p.rx_bytes):'—'}</td>
+      <td>${p.tx_bytes?fmtBytes(p.tx_bytes):'—'}</td>
+      <td>${(p.rx_err_packets||0)+(p.tx_fcs||0)||'0'}</td>
+    </tr>`).join('');
+}
+
+function updateStorage(st){
+  const el=document.getElementById('storage-content');
+  if(!st||(!st.disks?.length&&!st.partitions?.length)){ el.innerHTML='<p style="color:var(--muted);font-size:13px">Aucune information de stockage</p>'; return; }
+  let html='';
+  (st.disks||[]).forEach(d=>{
+    html+=`<div style="margin-bottom:12px">
+      <div style="font-weight:600;margin-bottom:6px">💾 ${d.model||d.type||'Disque'} ${d.serial?'('+d.serial+')':''}</div>
+      <div class="info-row"><span class="info-key">État</span><span class="info-val">${badge(d.state==='enabled','Actif',d.state||'—')}</span></div>
+      <div class="info-row"><span class="info-key">Capacité</span><span class="info-val">${d.total_fmt||'—'}</span></div>
+      <div class="info-row"><span class="info-key">Température</span><span class="info-val" style="color:${tempColor(d.temp||0)}">${d.temp?d.temp+'°C':'—'}</span></div>
+      <div class="info-row"><span class="info-key">Rotation</span><span class="info-val">${d.spinning?'Active':'Arrêtée'}</span></div>
+    </div>`;
+  });
+  (st.partitions||[]).forEach(p=>{
+    const pct=p.used_pct||0;
+    const barColor=pct>=90?'var(--red)':pct>=70?'var(--orange)':'var(--green)';
+    html+=`<div style="margin-bottom:12px">
+      <div style="font-weight:600;margin-bottom:6px">📁 ${p.label||'Partition'} (${p.fstype||'?'})</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:4px">${p.used_fmt||'—'} utilisés / ${p.total_fmt||'—'} total</div>
+      <div class="storage-bar"><div class="storage-fill" style="width:${pct}%;background:${barColor}"></div></div>
+      <div style="font-size:11px;color:var(--muted);margin-top:3px">${pct}% — Libre: ${p.free_fmt||'—'}</div>
+    </div>`;
+  });
+  el.innerHTML=html;
+}
+
+// ─────────────────────────────────────────
+// Outages
+// ─────────────────────────────────────────
+let outagesOffset=0;
+function updateOutages(rows, append=false){
+  const tb=document.getElementById('outages-body');
+  if(!append) tb.innerHTML='';
+  if(!rows||!rows.length){
+    if(!append) tb.innerHTML='<tr><td colspan="4" style="color:var(--muted)">Aucune coupure enregistrée</td></tr>';
+    document.getElementById('btn-more-outages').style.display='none';
+    return;
+  }
+  rows.forEach(o=>{
+    const ongoing=!o.ended_at;
+    tb.innerHTML+=`<tr>
+      <td>${o.started_fmt||'—'}</td>
+      <td>${o.ended_fmt||'—'}</td>
+      <td>${o.duration_fmt||'—'}</td>
+      <td>${ongoing?'<span class="badge br">En cours</span>':o.cause||'—'}</td>
+    </tr>`;
+  });
+  document.getElementById('btn-more-outages').style.display='block';
+}
+function loadMoreOutages(){
+  outagesOffset+=50;
+  fetchOutages(true);
+}
+
+// ─────────────────────────────────────────
+// Report Modal
+// ─────────────────────────────────────────
+function openReportModal(){
+  const now=new Date();
+  document.getElementById('rep-year').value=now.getFullYear();
+  document.getElementById('rep-month').value=now.getMonth()+1;
+  document.getElementById('report-modal').classList.add('open');
+}
+function openReport(){
+  const y=document.getElementById('rep-year').value;
+  const m=document.getElementById('rep-month').value;
+  window.open(`/api/report?year=${y}&month=${m}`,'_blank');
+}
+
+// Close modals on backdrop click
+document.querySelectorAll('.modal-backdrop').forEach(mb=>{
+  mb.addEventListener('click',e=>{ if(e.target===mb) mb.classList.remove('open'); });
+});
+
+// ─────────────────────────────────────────
+// Fetch functions
+// ─────────────────────────────────────────
+async function fetchMetrics(){
+  const r=await fetch('/api/metrics'); return r.json();
+}
+async function fetchHistory(){
+  const r=await fetch('/api/history?seconds=600'); return r.json();
+}
+async function fetchStats(){
+  const r=await fetch('/api/stats?period='+activePeriod); return r.json();
+}
+async function fetchOutages(append=false){
+  const r=await fetch(`/api/outages?limit=50&offset=${outagesOffset}`);
+  const data=await r.json();
+  updateOutages(data, append);
+}
+async function fetchCalendar(){
+  const r=await fetch(`/api/calendar?year=${calYear}&month=${calMonth}`);
+  const data=await r.json();
+  renderCalendar(data);
+}
+async function fetchSwitch(){
+  const r=await fetch('/api/switch'); return r.json();
+}
+async function fetchStorage(){
+  const r=await fetch('/api/storage'); return r.json();
+}
+// ─────────────────────────────────────────
+// Polling
+// ─────────────────────────────────────────
+async function fastRefresh(){
+  try{
+    const [metrics, history] = await Promise.all([fetchMetrics(), fetchHistory()]);
+    updateUI(metrics);
+    updateCharts(history);
+  } catch(e){
+    setText('last-update','Erreur réseau');
+  }
+}
+
+async function slowRefresh(){
+  try{
+    const [stats, sw, st] = await Promise.all([fetchStats(), fetchSwitch(), fetchStorage()]);
+    updateStats(stats);
+    updateSwitch(sw);
+    updateStorage(st);
+  } catch(e){}
+}
+
+// ─────────────────────────────────────────
+// Init
+// ─────────────────────────────────────────
+buildTileSelector();
+startClock();
+
+// Init report modal year/month
+(()=>{
+  const n=new Date();
+  const ry=document.getElementById('rep-year');
+  const rm=document.getElementById('rep-month');
+  if(ry) ry.value=n.getFullYear();
+  if(rm) rm.value=n.getMonth()+1;
+})();
+
+// Initial load
+fastRefresh();
+slowRefresh();
+fetchOutages();
+fetchCalendar();
+
+// Poll intervals
+setInterval(fastRefresh, 10000);
+setInterval(slowRefresh, 60000);
+setInterval(fetchOutages, 120000);
+</script>
+</body>
+</html>

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Configuration initiale — Freebox Monitor</title>
+<style>
+:root{--bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--text:#e2e8f0;--muted:#718096;--blue:#4299e1;--red:#fc8181;--green:#48bb78}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;
+  display:flex;align-items:center;justify-content:center;min-height:100vh;padding:16px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:16px;
+  padding:40px 36px;width:100%;max-width:420px;text-align:center}
+.logo{font-size:48px;margin-bottom:8px}
+h1{font-size:22px;font-weight:700;margin-bottom:4px}
+.sub{font-size:13px;color:var(--muted);margin-bottom:28px}
+.form-group{text-align:left;margin-bottom:16px}
+.form-group label{display:block;font-size:13px;color:var(--muted);margin-bottom:4px}
+.form-group input{width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);
+  border-radius:8px;color:var(--text);font-size:14px;outline:none}
+.form-group input:focus{border-color:var(--blue)}
+.btn{width:100%;padding:12px;background:var(--green);color:#fff;border:none;border-radius:8px;
+  font-size:15px;font-weight:600;cursor:pointer;margin-top:8px}
+.btn:hover{opacity:.9}
+.error{background:rgba(252,129,129,.12);color:var(--red);padding:10px;border-radius:8px;
+  font-size:13px;margin-bottom:16px}
+.hint{font-size:11px;color:var(--muted);margin-top:4px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">📡</div>
+  <h1>Configuration initiale</h1>
+  <p class="sub">Créez votre compte administrateur pour sécuriser l'accès</p>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <form method="POST" action="/setup" id="setup-form">
+    <div class="form-group">
+      <label>Nom d'utilisateur</label>
+      <input type="text" name="username" value="admin" required autofocus>
+    </div>
+    <div class="form-group">
+      <label>Mot de passe</label>
+      <input type="password" name="password" id="pw1" required minlength="4">
+    </div>
+    <div class="form-group">
+      <label>Confirmer le mot de passe</label>
+      <input type="password" id="pw2" required minlength="4">
+      <div class="hint" id="pw-hint" style="color:var(--red);display:none">Les mots de passe ne correspondent pas</div>
+    </div>
+    <button type="submit" class="btn">Créer le compte</button>
+  </form>
+</div>
+<script>
+document.getElementById('setup-form').addEventListener('submit', function(e){
+  const pw1=document.getElementById('pw1').value;
+  const pw2=document.getElementById('pw2').value;
+  if(pw1!==pw2){
+    e.preventDefault();
+    document.getElementById('pw-hint').style.display='block';
+  }
+});
+</script>
+</body>
+</html>
