@@ -42,9 +42,17 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 @app.after_request
 def set_security_headers(response):
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"]        = "DENY"
-    response.headers["Referrer-Policy"]        = "strict-origin-when-cross-origin"
+    response.headers["X-Content-Type-Options"]  = "nosniff"
+    response.headers["X-Frame-Options"]         = "DENY"
+    response.headers["Referrer-Policy"]         = "strict-origin-when-cross-origin"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "connect-src 'self'"
+    )
     return response
 
 
@@ -89,7 +97,9 @@ RATE_FORGOT_WINDOW = 600
 
 
 def _get_ip():
-    return request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+    # Never trust X-Forwarded-For unless behind a known reverse proxy.
+    # For direct deployment (default), always use the real remote address.
+    return request.remote_addr or "127.0.0.1"
 
 
 def _is_rate_limited(store: dict, ip: str, max_attempts: int, window: int) -> bool:
@@ -592,6 +602,12 @@ PERIOD_MAP = {
     "60j": 5184000, "90j": 7776000, "1an": 31536000
 }
 
+ALLOWED_CONFIG_KEYS = {
+    "smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_from",
+    "smtp_tls", "smtp_ssl", "alert_to", "alerts_enabled", "alert_outage_min_s",
+    "github_repo", "github_token", "port",
+}
+
 
 @app.route("/forgot-password", methods=["GET", "POST"])
 def forgot_password():
@@ -798,6 +814,8 @@ def route_config_get():
 def route_config_post():
     data = request.get_json(force=True) or {}
     for key, value in data.items():
+        if key not in ALLOWED_CONFIG_KEYS:
+            continue  # Ignore unknown / sensitive keys
         if key in ("smtp_password", "github_token") and value == "••••••••":
             continue  # Don't overwrite with redacted placeholder
         db.set_config(key, str(value))

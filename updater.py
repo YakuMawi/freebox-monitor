@@ -45,6 +45,7 @@ def check_for_update(repo: str, token: str = None) -> dict:
         "available": latest != current and latest > current,
         "current": current,
         "latest": latest,
+        "tag_name": data.get("tag_name", ""),
         "changelog": data.get("body", ""),
         "download_url": data.get("zipball_url", ""),
     }
@@ -58,17 +59,19 @@ def list_releases(repo: str, token: str = None) -> list:
     try:
         r = requests.get(url, headers=headers, timeout=15)
         r.raise_for_status()
+        releases = r.json()
+        if not releases:
+            return {"error": "Aucune release trouvée sur ce dépôt"}
         return [
             {
                 "tag":  rel.get("tag_name", ""),
                 "name": rel.get("name", ""),
                 "date": rel.get("published_at", "")[:10],
-                "download_url": rel.get("zipball_url", ""),
             }
-            for rel in r.json()
+            for rel in releases
         ]
     except Exception as e:
-        return []
+        return {"error": str(e)}
 
 
 def apply_update(repo: str, token: str = None, tag: str = None) -> tuple:
@@ -93,8 +96,6 @@ def apply_update(repo: str, token: str = None, tag: str = None) -> tuple:
         download_url = info.get("download_url")
         target_version = info.get("latest", "")
 
-    if not download_url:
-        return False, "URL de téléchargement introuvable"
     if not download_url:
         return False, "URL de téléchargement introuvable"
 

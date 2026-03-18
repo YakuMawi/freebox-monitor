@@ -320,11 +320,12 @@ async function testSmtp(){
 // ─────────────────────────────────────
 // Update
 // ─────────────────────────────────────
+let _latestTag = null;
+
 async function loadVersion(){
   const r=await fetch('/api/version');
   const data=await r.json();
   document.getElementById('current-version').textContent='v'+data.version;
-  // Load config for repo/token fields
   const rc=await fetch('/api/config');
   const cfg=await rc.json();
   document.getElementById('github_repo').value=cfg.github_repo||'';
@@ -340,28 +341,26 @@ async function saveUpdateConfig(){
 }
 
 async function checkUpdate(){
-  // Save config first
   await saveUpdateConfig();
   document.getElementById('update-alert').style.display='none';
   try{
     const r=await fetch('/api/update/check');
     const data=await r.json();
-    if(data.error){
-      showAlert('update-alert', data.error, 'err');
-      return;
-    }
+    if(data.error){ showAlert('update-alert', data.error, 'err'); return; }
+    _latestTag = data.tag_name || ('v'+data.latest);
     const box=document.getElementById('update-result');
     box.style.display='block';
     document.getElementById('latest-version').textContent='v'+data.latest;
     const btn=document.getElementById('btn-apply-update');
+    btn.style.display='inline-block';
     if(data.available){
       document.getElementById('update-status').innerHTML=
         '<span style="color:var(--green)">Une mise à jour est disponible !</span>';
-      btn.style.display='inline-block';
+      btn.textContent='Mettre à jour';
     } else {
       document.getElementById('update-status').innerHTML=
         '<span style="color:var(--muted)">Vous êtes à jour.</span>';
-      btn.style.display='none';
+      btn.textContent='Réinstaller';
     }
     document.getElementById('update-changelog').textContent=data.changelog||'Pas de changelog';
   }catch(e){
@@ -372,12 +371,14 @@ async function checkUpdate(){
 async function applyUpdate(){
   if(!confirm('Appliquer la mise à jour ? Le service sera redémarré.')) return;
   showAlert('update-alert','Mise à jour en cours...','info');
+  const prevVer=document.getElementById('current-version').textContent;
+  const body=_latestTag ? {tag:_latestTag} : {};
   try{
-    const r=await fetch('/api/update/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+    const r=await fetch('/api/update/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const data=await r.json();
     if(!data.ok){ showAlert('update-alert','Erreur: '+data.msg,'err'); return; }
     showAlert('update-alert','Mise à jour appliquée. Redémarrage en cours...','ok');
-    _pollRestart();
+    _pollRestart(prevVer);
   }catch(e){
     showAlert('update-alert','Erreur: '+e.message,'err');
   }
@@ -386,46 +387,64 @@ async function applyUpdate(){
 async function loadReleases(){
   const sel=document.getElementById('downgrade-select');
   sel.innerHTML='<option value="">Chargement...</option>';
-  const r=await fetch('/api/update/releases');
-  const data=await r.json();
-  if(data.error){ showAlert('downgrade-alert',data.error,'err'); return; }
-  sel.innerHTML='<option value="">— Choisir une version —</option>';
-  data.forEach(rel=>{
-    const opt=document.createElement('option');
-    opt.value=rel.tag;
-    opt.textContent=`${rel.tag} — ${rel.name} (${rel.date})`;
-    sel.appendChild(opt);
-  });
+  try{
+    const r=await fetch('/api/update/releases');
+    const data=await r.json();
+    if(!Array.isArray(data)){
+      showAlert('downgrade-alert', data.error||'Erreur inconnue', 'err');
+      sel.innerHTML='<option value="">— Erreur de chargement —</option>';
+      return;
+    }
+    sel.innerHTML='<option value="">— Choisir une version —</option>';
+    const curVer=document.getElementById('current-version').textContent.replace('v','');
+    data.forEach(rel=>{
+      if(rel.tag.replace('v','')=== curVer) return;
+      const opt=document.createElement('option');
+      opt.value=rel.tag;
+      opt.textContent=`${rel.tag} — ${rel.name} (${rel.date})`;
+      sel.appendChild(opt);
+    });
+    if(sel.options.length===1) showAlert('downgrade-alert','Aucune autre version disponible.','info');
+  }catch(e){
+    showAlert('downgrade-alert','Erreur: '+e.message,'err');
+    sel.innerHTML='<option value="">— Erreur de chargement —</option>';
+  }
 }
 
 async function applyDowngrade(){
   const tag=document.getElementById('downgrade-select').value;
   if(!tag){ showAlert('downgrade-alert','Sélectionnez une version.','err'); return; }
-  if(!confirm(`Rétrograder vers ${tag} ? Le service sera redémarré.`)) return;
-  showAlert('downgrade-alert','Rétrogradation en cours...','info');
+  if(!confirm(`Installer la version ${tag} ? Le service sera redémarré.`)) return;
+  showAlert('downgrade-alert','Installation en cours...','info');
+  const prevVer=document.getElementById('current-version').textContent;
   try{
     const r=await fetch('/api/update/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tag})});
     const data=await r.json();
     if(!data.ok){ showAlert('downgrade-alert','Erreur: '+data.msg,'err'); return; }
     showAlert('downgrade-alert','Version installée. Redémarrage en cours...','ok');
-    _pollRestart();
+    _pollRestart(prevVer);
   }catch(e){
     showAlert('downgrade-alert','Erreur: '+e.message,'err');
   }
 }
 
-function _pollRestart(){
+function _pollRestart(prevVer){
+  let wentDown=false;
   let attempts=0;
   const poll=async()=>{
     try{
       const r=await fetch('/api/version',{cache:'no-store'});
-      if(r.ok){ window.location.reload(); return; }
-    }catch(e){}
+      if(r.ok){
+        const d=await r.json();
+        const newVer='v'+(d.version||'');
+        if(wentDown || newVer!==prevVer){ window.location.reload(); return; }
+      }
+    }catch(e){ wentDown=true; }
     attempts++;
-    if(attempts<30) setTimeout(poll,2000);
+    if(attempts<40) setTimeout(poll,1500);
     else showAlert('update-alert','Rechargez la page manuellement.','info');
   };
-  setTimeout(poll,4000);
+  setTimeout(poll,3000);
 }
 
 // ─────────────────────────────────────
