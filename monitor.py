@@ -925,15 +925,18 @@ if __name__ == "__main__":
     t = threading.Thread(target=background_loop, daemon=True)
     t.start()
 
+    # Port (configurable via config.json ou DB)
+    port = int(db.get_config("port", "8000") or "8000")
+
     # SSL
     cert_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "certs", "cert.pem")
     key_path  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "certs", "key.pem")
 
     if os.path.exists(cert_path) and os.path.exists(key_path):
-        log.info("Dashboard : https://0.0.0.0:8000 (SSL)")
-        app.run(host="0.0.0.0", port=8000, debug=False, use_reloader=False,
+        log.info("Dashboard : https://0.0.0.0:%d (SSL)", port)
+        app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False,
                 ssl_context=(cert_path, key_path))
     else:
         log.warning("Certificats SSL non trouvés dans certs/ — démarrage en HTTP")
-        log.info("Dashboard : http://0.0.0.0:8000")
-        app.run(host="0.0.0.0", port=8000, debug=False, use_reloader=False)
+        log.info("Dashboard : http://0.0.0.0:%d", port)
+        app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)

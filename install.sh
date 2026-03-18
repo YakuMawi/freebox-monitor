@@ -7,11 +7,20 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVICE_NAME="freebox-monitor"
-PORT=8000
 
 echo "══════════════════════════════════════════"
 echo "  📡 Installation de Freebox Monitor"
 echo "══════════════════════════════════════════"
+echo ""
+
+# 0. Choix du port
+read -rp "  Port d'écoute [8000] : " PORT_INPUT
+PORT="${PORT_INPUT:-8000}"
+if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+    echo "❌ Port invalide. Utilisez un entier entre 1 et 65535."
+    exit 1
+fi
+echo "✓ Port sélectionné : $PORT"
 echo ""
 
 # 1. Vérifier Python
@@ -31,6 +40,18 @@ source "$SCRIPT_DIR/venv/bin/activate"
 pip install --quiet --upgrade pip
 pip install --quiet -r "$SCRIPT_DIR/requirements.txt"
 echo "✓ Dépendances installées"
+
+# Écrire le port choisi dans config.json
+"$SCRIPT_DIR/venv/bin/python3" - <<PYEOF
+import json, os
+cfg_path = os.path.join("$SCRIPT_DIR", "config.json")
+with open(cfg_path) as f:
+    cfg = json.load(f)
+cfg["port"] = "$PORT"
+with open(cfg_path, "w") as f:
+    json.dump(cfg, f, indent=2)
+PYEOF
+echo "✓ Port $PORT enregistré dans la configuration"
 
 # 3. Générer le certificat SSL auto-signé
 echo ""
@@ -84,15 +105,15 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-sudo mv /tmp/${SERVICE_NAME}.service /etc/systemd/system/${SERVICE_NAME}.service
-sudo systemctl daemon-reload
-sudo systemctl enable ${SERVICE_NAME}.service
+mv /tmp/${SERVICE_NAME}.service /etc/systemd/system/${SERVICE_NAME}.service
+systemctl daemon-reload
+systemctl enable ${SERVICE_NAME}.service
 echo "✓ Service systemd installé et activé"
 
 # 6. Démarrer le service
 echo ""
 echo "→ Démarrage du service..."
-sudo systemctl start ${SERVICE_NAME}.service
+systemctl start ${SERVICE_NAME}.service
 sleep 2
 
 if systemctl is-active --quiet ${SERVICE_NAME}.service; then
