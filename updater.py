@@ -50,12 +50,51 @@ def check_for_update(repo: str, token: str = None) -> dict:
     }
 
 
-def apply_update(repo: str, token: str = None) -> tuple:
-    info = check_for_update(repo, token)
-    if not info.get("available"):
-        return False, "Aucune mise à jour disponible"
+def list_releases(repo: str, token: str = None) -> list:
+    url = f"https://api.github.com/repos/{repo}/releases"
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        r = requests.get(url, headers=headers, timeout=15)
+        r.raise_for_status()
+        return [
+            {
+                "tag":  rel.get("tag_name", ""),
+                "name": rel.get("name", ""),
+                "date": rel.get("published_at", "")[:10],
+                "download_url": rel.get("zipball_url", ""),
+            }
+            for rel in r.json()
+        ]
+    except Exception as e:
+        return []
 
-    download_url = info.get("download_url")
+
+def apply_update(repo: str, token: str = None, tag: str = None) -> tuple:
+    if tag:
+        # Version spécifique (mise à jour ou rétrogradation)
+        url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
+        headers = {"Accept": "application/vnd.github+json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        try:
+            r = requests.get(url, headers=headers, timeout=15)
+            r.raise_for_status()
+            data = r.json()
+            download_url = data.get("zipball_url", "")
+            target_version = tag.lstrip("v")
+        except Exception as e:
+            return False, f"Release introuvable : {e}"
+    else:
+        info = check_for_update(repo, token)
+        if not info.get("available"):
+            return False, "Aucune mise à jour disponible"
+        download_url = info.get("download_url")
+        target_version = info.get("latest", "")
+
+    if not download_url:
+        return False, "URL de téléchargement introuvable"
     if not download_url:
         return False, "URL de téléchargement introuvable"
 
@@ -111,7 +150,7 @@ def apply_update(repo: str, token: str = None) -> tuple:
                 else:
                     shutil.copy2(src, dst)
 
-        return True, f"Mise à jour vers {info['latest']} effectuée"
+        return True, f"Version {target_version} installée"
 
     except Exception as e:
         log.error("Erreur mise à jour: %s", e)

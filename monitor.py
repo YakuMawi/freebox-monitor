@@ -870,16 +870,27 @@ def route_update_check():
     return jsonify(updater.check_for_update(repo, token or None))
 
 
-@app.route("/api/update/apply", methods=["POST"])
+@app.route("/api/update/releases")
 @login_required
-def route_update_apply():
+def route_update_releases():
     repo = db.get_config("github_repo", "")
     token = db.get_config("github_token", "")
     if not repo:
+        return jsonify({"error": "Dépôt GitHub non configuré"}), 400
+    return jsonify(updater.list_releases(repo, token or None))
+
+
+@app.route("/api/update/apply", methods=["POST"])
+@login_required
+def route_update_apply():
+    data  = request.get_json(force=True) or {}
+    tag   = data.get("tag") or None   # None = dernière version, sinon tag spécifique
+    repo  = db.get_config("github_repo", "")
+    token = db.get_config("github_token", "")
+    if not repo:
         return jsonify({"ok": False, "msg": "Dépôt GitHub non configuré"}), 400
-    ok, msg = updater.apply_update(repo, token or None)
+    ok, msg = updater.apply_update(repo, token or None, tag=tag)
     if ok:
-        # Schedule restart
         threading.Thread(target=_restart_service, daemon=True).start()
     return jsonify({"ok": ok, "msg": msg})
 

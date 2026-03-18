@@ -1,11 +1,13 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="fr" data-theme="dark">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Connexion — Freebox Monitor</title>
+<script>(function(){var t=localStorage.getItem('fbx-theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>
 <style>
 :root{--bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--text:#e2e8f0;--muted:#718096;--blue:#4299e1;--red:#fc8181}
+[data-theme="light"]{--bg:#f0f4f8;--card:#ffffff;--border:#cbd5e0;--text:#1a202c;--muted:#4a5568;--blue:#3182ce;--red:#c53030}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;
   display:flex;align-items:center;justify-content:center;min-height:100vh;padding:16px}
@@ -49,6 +51,11 @@ h1{font-size:22px;font-weight:700;margin-bottom:4px}
     <button type="submit" class="btn">Connexion</button>
   </form>
   <div class="link-row"><a href="/forgot-password">Mot de passe oublié ?</a></div>
+  <div class="link-row" style="margin-top:8px"><button onclick="toggleTheme()" id="theme-btn" style="background:none;border:none;cursor:pointer;font-size:18px">☀️</button></div>
 </div>
+<script>
+function toggleTheme(){var c=document.documentElement.getAttribute('data-theme')||'dark';var n=c==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',n);localStorage.setItem('fbx-theme',n);document.getElementById('theme-btn').textContent=n==='dark'?'☀️':'🌙';}
+(function(){var t=document.documentElement.getAttribute('data-theme')||'dark';var b=document.getElementById('theme-btn');if(b)b.textContent=t==='dark'?'☀️':'🌙';})();
+</script>
 </body>
 </html>

@@ -1,5 +1,6 @@
 {
   "port": "8000",
+  "github_repo": "YakuMawi/freebox-monitor",
   "smtp_host": "",
   "smtp_port": "587",
   "smtp_user": "",

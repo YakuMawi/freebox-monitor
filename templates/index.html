@@ -1,15 +1,21 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="fr" data-theme="dark">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Freebox Monitor</title>
+<script>(function(){var t=localStorage.getItem('fbx-theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 :root{
   --bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--text:#e2e8f0;--muted:#718096;
   --blue:#4299e1;--green:#48bb78;--orange:#ed8936;--red:#fc8181;--purple:#9f7aea;
   --cyan:#76e4f7;--yellow:#f6e05e;--teal:#4fd1c5;
+}
+[data-theme="light"]{
+  --bg:#f0f4f8;--card:#ffffff;--border:#cbd5e0;--text:#1a202c;--muted:#4a5568;
+  --blue:#3182ce;--green:#276749;--orange:#c05621;--red:#c53030;--purple:#6b46c1;
+  --cyan:#0987a0;--yellow:#b7791f;--teal:#2c7a7b;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;padding:16px}
@@ -84,7 +90,8 @@ header{display:flex;align-items:center;justify-content:space-between;
 
 /* Sensor grid */
 .sensor-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:4px}
-.sensor-item{background:rgba(255,255,255,.03);border-radius:8px;padding:10px}
+.sensor-item{background:rgba(0,0,0,.03);border-radius:8px;padding:10px}
+[data-theme="dark"] .sensor-item{background:rgba(255,255,255,.03)}
 .sensor-name{font-size:11px;color:var(--muted);margin-bottom:4px}
 .sensor-val{font-size:18px;font-weight:700}
 .fan-item{display:flex;align-items:center;gap:12px;padding:10px 0;
@@ -198,6 +205,7 @@ header{display:flex;align-items:center;justify-content:space-between;
     <div style="display:flex;flex-direction:column;gap:6px">
       <a href="/settings" class="btn btn-primary" style="text-decoration:none">⚙ Paramètres</a>
       <button class="btn" onclick="openReportModal()">📄 Rapport</button>
+      <button class="btn" id="theme-btn" onclick="toggleTheme()">☀️</button>
       <a href="/logout" class="btn" style="text-decoration:none;background:var(--red);color:#fff">⏻ Déconnexion</a>
     </div>
   </div>
@@ -986,6 +994,20 @@ fetchCalendar();
 setInterval(fastRefresh, 10000);
 setInterval(slowRefresh, 60000);
 setInterval(fetchOutages, 120000);
+
+// Thème
+function toggleTheme(){
+  const cur=document.documentElement.getAttribute('data-theme')||'dark';
+  const next=cur==='dark'?'light':'dark';
+  document.documentElement.setAttribute('data-theme',next);
+  localStorage.setItem('fbx-theme',next);
+  document.getElementById('theme-btn').textContent=next==='dark'?'☀️':'🌙';
+}
+(function(){
+  const t=document.documentElement.getAttribute('data-theme')||'dark';
+  const btn=document.getElementById('theme-btn');
+  if(btn) btn.textContent=t==='dark'?'☀️':'🌙';
+})();
 </script>
 </body>
 </html>

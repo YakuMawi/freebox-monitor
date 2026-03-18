@@ -1,12 +1,15 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="fr" data-theme="dark">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Paramètres — Freebox Monitor</title>
+<script>(function(){var t=localStorage.getItem('fbx-theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>
 <style>
 :root{--bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--text:#e2e8f0;--muted:#718096;
   --blue:#4299e1;--green:#48bb78;--red:#fc8181;--orange:#ed8936}
+[data-theme="light"]{--bg:#f0f4f8;--card:#ffffff;--border:#cbd5e0;--text:#1a202c;--muted:#4a5568;
+  --blue:#3182ce;--green:#276749;--red:#c53030;--orange:#c05621}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;padding:16px}
 a{color:var(--blue);text-decoration:none}
@@ -77,7 +80,10 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
 <header>
   <div class="h-logo">📡</div>
   <div class="h-title">Paramètres</div>
-  <a href="/" class="h-back">← Retour au dashboard</a>
+  <div style="display:flex;align-items:center;gap:12px">
+    <button id="theme-btn" onclick="toggleTheme()" style="background:none;border:1px solid var(--border);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:16px;color:var(--text)">☀️</button>
+    <a href="/" class="h-back">← Retour au dashboard</a>
+  </div>
 </header>
 
 <div class="tabs">
@@ -187,6 +193,20 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
       <div class="changelog" id="update-changelog"></div>
     </div>
     <div class="alert" id="update-alert"></div>
+
+    <hr style="border:none;border-top:1px solid var(--border);margin:20px 0">
+    <div class="card-title">Rétrograder vers une version antérieure</div>
+    <div class="form-group">
+      <label>Version disponible</label>
+      <select id="downgrade-select" style="width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px">
+        <option value="">— Cliquez sur Charger —</option>
+      </select>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-outline" onclick="loadReleases()">Charger les versions</button>
+      <button class="btn btn-red" onclick="applyDowngrade()">Rétrograder</button>
+    </div>
+    <div class="alert" id="downgrade-alert"></div>
   </div>
 </div>
 
@@ -353,15 +373,59 @@ async function applyUpdate(){
   if(!confirm('Appliquer la mise à jour ? Le service sera redémarré.')) return;
   showAlert('update-alert','Mise à jour en cours...','info');
   try{
-    const r=await fetch('/api/update/apply',{method:'POST'});
+    const r=await fetch('/api/update/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
     const data=await r.json();
-    showAlert('update-alert', data.msg, data.ok?'ok':'err');
-    if(data.ok){
-      setTimeout(()=>{ window.location.reload(); }, 5000);
-    }
+    if(!data.ok){ showAlert('update-alert','Erreur: '+data.msg,'err'); return; }
+    showAlert('update-alert','Mise à jour appliquée. Redémarrage en cours...','ok');
+    _pollRestart();
   }catch(e){
     showAlert('update-alert','Erreur: '+e.message,'err');
   }
+}
+
+async function loadReleases(){
+  const sel=document.getElementById('downgrade-select');
+  sel.innerHTML='<option value="">Chargement...</option>';
+  const r=await fetch('/api/update/releases');
+  const data=await r.json();
+  if(data.error){ showAlert('downgrade-alert',data.error,'err'); return; }
+  sel.innerHTML='<option value="">— Choisir une version —</option>';
+  data.forEach(rel=>{
+    const opt=document.createElement('option');
+    opt.value=rel.tag;
+    opt.textContent=`${rel.tag} — ${rel.name} (${rel.date})`;
+    sel.appendChild(opt);
+  });
+}
+
+async function applyDowngrade(){
+  const tag=document.getElementById('downgrade-select').value;
+  if(!tag){ showAlert('downgrade-alert','Sélectionnez une version.','err'); return; }
+  if(!confirm(`Rétrograder vers ${tag} ? Le service sera redémarré.`)) return;
+  showAlert('downgrade-alert','Rétrogradation en cours...','info');
+  try{
+    const r=await fetch('/api/update/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tag})});
+    const data=await r.json();
+    if(!data.ok){ showAlert('downgrade-alert','Erreur: '+data.msg,'err'); return; }
+    showAlert('downgrade-alert','Version installée. Redémarrage en cours...','ok');
+    _pollRestart();
+  }catch(e){
+    showAlert('downgrade-alert','Erreur: '+e.message,'err');
+  }
+}
+
+function _pollRestart(){
+  let attempts=0;
+  const poll=async()=>{
+    try{
+      const r=await fetch('/api/version',{cache:'no-store'});
+      if(r.ok){ window.location.reload(); return; }
+    }catch(e){}
+    attempts++;
+    if(attempts<30) setTimeout(poll,2000);
+    else showAlert('update-alert','Rechargez la page manuellement.','info');
+  };
+  setTimeout(poll,4000);
 }
 
 // ─────────────────────────────────────
@@ -409,8 +473,24 @@ async function changePassword(){
 }
 
 // ─────────────────────────────────────
+// Thème
+// ─────────────────────────────────────
+function toggleTheme(){
+  const cur=document.documentElement.getAttribute('data-theme')||'dark';
+  const next=cur==='dark'?'light':'dark';
+  document.documentElement.setAttribute('data-theme',next);
+  localStorage.setItem('fbx-theme',next);
+  document.getElementById('theme-btn').textContent=next==='dark'?'☀️':'🌙';
+}
+function _initThemeBtn(){
+  const t=document.documentElement.getAttribute('data-theme')||'dark';
+  document.getElementById('theme-btn').textContent=t==='dark'?'☀️':'🌙';
+}
+
+// ─────────────────────────────────────
 // Init
 // ─────────────────────────────────────
+_initThemeBtn();
 loadSmtpConfig();
 </script>
 </body>
