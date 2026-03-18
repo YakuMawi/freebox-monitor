@@ -22,7 +22,7 @@ Dashboard de monitoring temps réel pour Freebox (Delta, Pop, Ultra...) avec ale
 ## Installation rapide
 
 ```bash
-git clone https://github.com/<votre-user>/freebox-monitor.git
+git clone https://github.com/YakuMawi/freebox-monitor.git
 cd freebox-monitor
 sudo bash install.sh
 ```
@@ -39,7 +39,7 @@ Le script d'installation :
 
 ```bash
 # Cloner le dépôt
-git clone https://github.com/<votre-user>/freebox-monitor.git
+git clone https://github.com/YakuMawi/freebox-monitor.git
 cd freebox-monitor
 
 # Environnement virtuel
