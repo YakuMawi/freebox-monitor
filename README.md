@@ -21,21 +21,32 @@ Dashboard de monitoring temps réel pour Freebox (Delta, Pop, Ultra...) avec ale
 - Réseau local avec accès à la Freebox (http://mafreebox.freebox.fr)
 - OpenSSL (pour le certificat SSL)
 
-## Installation rapide
+## Installation en une commande
+
+La méthode la plus simple. Requiert uniquement `curl` et un accès root :
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/YakuMawi/freebox-monitor/main/bootstrap.sh)
+```
+
+Le bootstrap installe automatiquement `git` si absent, clone le dépôt dans `/root/freebox-monitor`, puis lance `install.sh`.
+
+## Installation classique (git clone)
 
 ```bash
 git clone https://github.com/YakuMawi/freebox-monitor.git
 cd freebox-monitor
-sudo bash install.sh
+bash install.sh
 ```
 
 Le script d'installation :
-1. Crée un environnement virtuel Python
-2. Installe les dépendances
-3. Génère un certificat SSL auto-signé (10 ans)
-4. Lance l'autorisation Freebox (validation sur l'écran LCD)
-5. Crée et démarre le service systemd
-6. Affiche l'URL d'accès
+1. Installe les dépendances système manquantes (`python3`, `python3-venv`, `openssl`) via `apt-get`
+2. Demande le port d'écoute (défaut : `8000`)
+3. Crée un environnement virtuel Python et installe les dépendances Python
+4. Génère un certificat SSL auto-signé (10 ans)
+5. Lance l'autorisation Freebox (validation sur l'écran LCD)
+6. Crée et démarre le service systemd
+7. Affiche l'URL d'accès
 
 ## Installation manuelle
 
@@ -110,6 +121,23 @@ freebox-monitor/
 ├── certs/              # Certificats SSL (gitignored)
 └── credentials.json    # Token Freebox (gitignored)
 ```
+
+## Désinstallation
+
+```bash
+# Arrêter et désactiver le service
+systemctl stop freebox-monitor
+systemctl disable freebox-monitor
+
+# Supprimer le fichier de service
+rm /etc/systemd/system/freebox-monitor.service
+systemctl daemon-reload
+
+# Supprimer le répertoire du projet
+rm -rf /root/freebox-monitor
+```
+
+> Les données (base SQLite, certificats SSL, credentials Freebox) sont dans `/root/freebox-monitor/` et seront supprimées avec le répertoire.
 
 ## Sécurité
 

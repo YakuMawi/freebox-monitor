@@ -23,10 +23,22 @@ fi
 echo "✓ Port sélectionné : $PORT"
 echo ""
 
-# 1. Vérifier Python
-if ! command -v python3 &>/dev/null; then
-    echo "❌ Python 3 est requis. Installez-le avec: sudo apt install python3 python3-venv"
-    exit 1
+# 1. Installer les dépendances système manquantes
+PKGS=()
+command -v python3   &>/dev/null || PKGS+=(python3)
+command -v openssl   &>/dev/null || PKGS+=(openssl)
+python3 -m venv --help &>/dev/null 2>&1 || PKGS+=(python3-venv)
+
+if [ ${#PKGS[@]} -gt 0 ]; then
+    if ! command -v apt-get &>/dev/null; then
+        echo "❌ apt-get introuvable. Installez manuellement : ${PKGS[*]}"
+        exit 1
+    fi
+    echo "→ Installation des dépendances système : ${PKGS[*]}"
+    apt-get update -qq
+    apt-get install -y -qq "${PKGS[@]}"
+    echo "✓ Dépendances système installées"
+    echo ""
 fi
 
 PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
