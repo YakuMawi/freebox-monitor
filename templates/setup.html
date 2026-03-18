@@ -47,6 +47,11 @@ h1{font-size:22px;font-weight:700;margin-bottom:4px}
       <input type="password" id="pw2" required minlength="4">
       <div class="hint" id="pw-hint" style="color:var(--red);display:none">Les mots de passe ne correspondent pas</div>
     </div>
+    <div class="form-group">
+      <label>Email de récupération <span style="color:var(--muted)">(optionnel — recommandé)</span></label>
+      <input type="email" name="recovery_email" placeholder="vous@exemple.fr">
+      <div class="hint">Permet de réinitialiser votre mot de passe par email en cas d'oubli</div>
+    </div>
     <button type="submit" class="btn">Créer le compte</button>
   </form>
 </div>

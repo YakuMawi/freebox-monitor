@@ -105,6 +105,73 @@ def send_recovery_alert(config: dict, started_at: int, duration_s: int, ipv4: st
     return _send(config, subject, html)
 
 
+def send_reset_code_email(config: dict, to_email: str, username: str, code: str) -> tuple:
+    """Envoie le code OTP de réinitialisation directement à l'adresse de récupération."""
+    host     = config.get("smtp_host", "")
+    port     = int(config.get("smtp_port", 587))
+    user     = config.get("smtp_user", "")
+    password = config.get("smtp_password", "")
+    from_    = config.get("smtp_from", "") or user
+    tls      = str(config.get("smtp_tls", "true")).lower() == "true"
+    ssl      = str(config.get("smtp_ssl", "false")).lower() == "true"
+
+    if not host or not to_email:
+        return False, "SMTP non configuré"
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8"></head>
+<body style="background:#0f1117;font-family:system-ui,sans-serif;padding:32px;">
+  <div style="max-width:520px;margin:0 auto;background:#1a1d27;border-radius:12px;
+              border:1px solid #2a2d3a;overflow:hidden;">
+    <div style="background:#4299e1;padding:20px 24px;">
+      <h2 style="margin:0;color:#fff;font-size:18px;">📡 Freebox Monitor</h2>
+      <p style="margin:4px 0 0;color:rgba(255,255,255,.8);font-size:14px;">Réinitialisation de mot de passe</p>
+    </div>
+    <div style="padding:24px;">
+      <p style="color:#e2e8f0;margin-bottom:16px;">Bonjour <strong>{username}</strong>,</p>
+      <p style="color:#718096;font-size:14px;margin-bottom:24px;">
+        Voici votre code de réinitialisation. Il est valable <strong style="color:#e2e8f0;">15 minutes</strong>.
+      </p>
+      <div style="background:#0f1117;border:2px solid #4299e1;border-radius:12px;
+                  text-align:center;padding:24px;margin-bottom:24px;">
+        <div style="font-size:42px;font-weight:700;color:#4299e1;letter-spacing:10px;">{code}</div>
+      </div>
+      <p style="color:#718096;font-size:12px;">
+        Si vous n'avez pas demandé cette réinitialisation, ignorez cet email.
+      </p>
+    </div>
+    <div style="padding:12px 24px;border-top:1px solid #2a2d3a;
+                font-size:11px;color:#718096;text-align:right;">
+      Généré le {datetime.now().strftime('%d/%m/%Y à %H:%M:%S')}
+    </div>
+  </div>
+</body></html>"""
+
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = "[Freebox Monitor] Code de réinitialisation de mot de passe"
+        msg["From"]    = from_
+        msg["To"]      = to_email
+        msg.attach(MIMEText(html, "html"))
+
+        if ssl:
+            server = smtplib.SMTP_SSL(host, port, timeout=15)
+        else:
+            server = smtplib.SMTP(host, port, timeout=15)
+            if tls:
+                server.starttls()
+
+        if user and password:
+            server.login(user, password)
+
+        server.sendmail(from_, [to_email], msg.as_string())
+        server.quit()
+        return True, "OK"
+    except Exception as e:
+        log.error("Erreur SMTP reset code: %s", e)
+        return False, str(e)
+
+
 def send_test_email(config: dict) -> tuple:
     dt = datetime.now()
     html = _build_html(

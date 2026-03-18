@@ -10,6 +10,13 @@ from contextlib import contextmanager
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "freebox.db")
 
 
+def _migrate(c):
+    """Migrations incrémentales sur la DB existante."""
+    cols = [r[1] for r in c.execute("PRAGMA table_info(users)").fetchall()]
+    if "recovery_email" not in cols:
+        c.execute("ALTER TABLE users ADD COLUMN recovery_email TEXT DEFAULT ''")
+
+
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     with _conn() as c:
@@ -48,14 +55,23 @@ def init_db():
                 value   TEXT
             );
             CREATE TABLE IF NOT EXISTS users (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                username   TEXT UNIQUE NOT NULL,
-                password   TEXT NOT NULL,
-                created_at INTEGER NOT NULL
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                username       TEXT UNIQUE NOT NULL,
+                password       TEXT NOT NULL,
+                created_at     INTEGER NOT NULL,
+                recovery_email TEXT DEFAULT ''
             );
-            CREATE INDEX IF NOT EXISTS idx_metrics_ts   ON metrics(ts);
+            CREATE TABLE IF NOT EXISTS reset_codes (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                username   TEXT NOT NULL,
+                code       TEXT NOT NULL,
+                expires_at INTEGER NOT NULL,
+                used       INTEGER DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_metrics_ts    ON metrics(ts);
             CREATE INDEX IF NOT EXISTS idx_outages_start ON outages(started_at);
         """)
+        _migrate(c)
 
 
 @contextmanager
@@ -272,6 +288,53 @@ def user_count() -> int:
     with _conn() as c:
         row = c.execute("SELECT COUNT(*) AS cnt FROM users").fetchone()
     return row["cnt"] if row else 0
+
+
+def set_recovery_email(username: str, email: str):
+    with _conn() as c:
+        c.execute("UPDATE users SET recovery_email=? WHERE username=?", (email.strip(), username))
+
+
+def get_recovery_email(username: str) -> str:
+    with _conn() as c:
+        row = c.execute("SELECT recovery_email FROM users WHERE username=?", (username,)).fetchone()
+    return (row["recovery_email"] or "") if row else ""
+
+
+def check_recovery_email(username: str, email: str) -> bool:
+    """Retourne True si l'email correspond à l'email de récupération enregistré."""
+    stored = get_recovery_email(username)
+    return stored and stored.lower() == email.strip().lower()
+
+
+def create_reset_code(username: str) -> str:
+    import secrets as _sec
+    code = str(_sec.randbelow(900000) + 100000)  # 6 chiffres garanti
+    expires_at = int(datetime.now().timestamp()) + 900  # 15 minutes
+    with _conn() as c:
+        # Invalider les anciens codes non utilisés pour ce user
+        c.execute("UPDATE reset_codes SET used=1 WHERE username=? AND used=0", (username,))
+        c.execute(
+            "INSERT INTO reset_codes(username, code, expires_at, used) VALUES(?,?,?,0)",
+            (username, code, expires_at)
+        )
+    return code
+
+
+def verify_reset_code(username: str, code: str):
+    """Retourne l'id du code si valide, None sinon."""
+    now = int(datetime.now().timestamp())
+    with _conn() as c:
+        row = c.execute(
+            "SELECT id FROM reset_codes WHERE username=? AND code=? AND used=0 AND expires_at>?",
+            (username, code, now)
+        ).fetchone()
+    return row["id"] if row else None
+
+
+def consume_reset_code(code_id: int):
+    with _conn() as c:
+        c.execute("UPDATE reset_codes SET used=1 WHERE id=?", (code_id,))
 
 
 def seed_config(defaults: dict):

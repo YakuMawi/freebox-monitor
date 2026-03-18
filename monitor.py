@@ -35,6 +35,17 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 app = Flask(__name__)
+app.config["SESSION_COOKIE_SECURE"]   = True
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+
+
+@app.after_request
+def set_security_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"]        = "DENY"
+    response.headers["Referrer-Policy"]        = "strict-origin-when-cross-origin"
+    return response
 
 
 # ──────────────────────────────────────────────
@@ -65,6 +76,31 @@ _current_outage_id = None
 _last_conn_state   = None
 _last_ipv4         = "?"
 _last_prune        = 0
+
+# Rate limiting : {ip: [timestamp, ...]}
+_rate_login        = {}
+_rate_forgot       = {}
+_rate_lock         = threading.Lock()
+
+RATE_LOGIN_MAX     = 5    # tentatives
+RATE_LOGIN_WINDOW  = 300  # secondes
+RATE_FORGOT_MAX    = 3
+RATE_FORGOT_WINDOW = 600
+
+
+def _get_ip():
+    return request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+
+
+def _is_rate_limited(store: dict, ip: str, max_attempts: int, window: int) -> bool:
+    now = time.time()
+    with _rate_lock:
+        hits = [t for t in store.get(ip, []) if now - t < window]
+        store[ip] = hits
+        if len(hits) >= max_attempts:
+            return True
+        store[ip].append(now)
+        return False
 
 
 # ──────────────────────────────────────────────
@@ -551,6 +587,83 @@ PERIOD_MAP = {
 }
 
 
+@app.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    if "user" in session:
+        return redirect(url_for("index"))
+    cfg = db.get_all_config()
+    smtp_ok = bool(cfg.get("smtp_host", "").strip())
+    if request.method == "POST":
+        ip = _get_ip()
+        if _is_rate_limited(_rate_forgot, ip, RATE_FORGOT_MAX, RATE_FORGOT_WINDOW):
+            return render_template("forgot_password.html", smtp_ok=smtp_ok,
+                                   error="Trop de tentatives. Réessayez dans 10 minutes.")
+        username = request.form.get("username", "").strip()
+        email    = request.form.get("email", "").strip()
+        user = db.get_user(username)
+        if not user or not db.check_recovery_email(username, email):
+            return render_template("forgot_password.html", smtp_ok=smtp_ok,
+                                   error="Nom d'utilisateur ou email de récupération incorrect.")
+        if not smtp_ok:
+            # Pas de SMTP : email vérifié — on stocke l'autorisation côté serveur dans la session
+            session["reset_allowed_user"] = username
+            return redirect(url_for("reset_password"))
+        code = db.create_reset_code(username)
+        ok, msg = alert_mod.send_reset_code_email(cfg, email, username, code)
+        if not ok:
+            return render_template("forgot_password.html", smtp_ok=smtp_ok,
+                                   error=f"Erreur d'envoi email : {msg}")
+        session["reset_pending_user"] = username
+        return redirect(url_for("reset_password", sent="1"))
+    return render_template("forgot_password.html", smtp_ok=smtp_ok)
+
+
+@app.route("/reset-password", methods=["GET", "POST"])
+def reset_password():
+    if "user" in session:
+        return redirect(url_for("index"))
+
+    # Deux modes autorisés, tous deux vérifiés côté serveur :
+    # - reset_allowed_user : identité vérifiée par email (sans SMTP)
+    # - reset_pending_user : code OTP envoyé par SMTP
+    no_smtp  = "reset_allowed_user" in session
+    username = session.get("reset_allowed_user") or session.get("reset_pending_user", "")
+
+    if not username:
+        # Accès direct sans passer par /forgot-password → refusé
+        return redirect(url_for("forgot_password"))
+
+    if request.method == "POST":
+        new_pw  = request.form.get("new_password", "")
+        confirm = request.form.get("confirm_password", "")
+        if not new_pw or not confirm:
+            return render_template("reset_password.html", username=username, no_smtp=no_smtp,
+                                   error="Tous les champs sont requis.")
+        if new_pw != confirm:
+            return render_template("reset_password.html", username=username, no_smtp=no_smtp,
+                                   error="Les mots de passe ne correspondent pas.")
+        if len(new_pw) < 4:
+            return render_template("reset_password.html", username=username, no_smtp=no_smtp,
+                                   error="Mot de passe trop court (min. 4 caractères).")
+        if not no_smtp:
+            code = request.form.get("code", "").strip()
+            if not code:
+                return render_template("reset_password.html", username=username, no_smtp=no_smtp,
+                                       error="Le code est requis.")
+            code_id = db.verify_reset_code(username, code)
+            if code_id is None:
+                return render_template("reset_password.html", username=username, no_smtp=no_smtp,
+                                       error="Code invalide ou expiré.")
+            db.consume_reset_code(code_id)
+        db.update_password(username, generate_password_hash(new_pw))
+        session.pop("reset_allowed_user", None)
+        session.pop("reset_pending_user", None)
+        return render_template("login.html", success="Mot de passe modifié. Vous pouvez vous connecter.")
+
+    sent = request.args.get("sent", "")
+    return render_template("reset_password.html", username=username, no_smtp=no_smtp, sent=sent)
+
+
 @app.route("/setup", methods=["GET", "POST"])
 def setup():
     if db.user_count() > 0:
@@ -563,6 +676,9 @@ def setup():
         if len(password) < 4:
             return render_template("setup.html", error="Mot de passe trop court (min. 4 caractères)")
         db.create_user(username, generate_password_hash(password))
+        recovery_email = request.form.get("recovery_email", "").strip()
+        if recovery_email:
+            db.set_recovery_email(username, recovery_email)
         session["user"] = username
         return redirect(url_for("index"))
     return render_template("setup.html")
@@ -573,6 +689,9 @@ def login():
     if db.user_count() == 0:
         return redirect(url_for("setup"))
     if request.method == "POST":
+        ip = _get_ip()
+        if _is_rate_limited(_rate_login, ip, RATE_LOGIN_MAX, RATE_LOGIN_WINDOW):
+            return render_template("login.html", error="Trop de tentatives. Réessayez dans quelques minutes.")
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
         user = db.get_user(username)
@@ -695,6 +814,21 @@ def route_report():
     month = int(request.args.get("month", now.month))
     html  = render_monthly_report(year, month)
     return Response(html, mimetype="text/html")
+
+
+@app.route("/api/auth/recovery-email", methods=["GET"])
+@login_required
+def route_get_recovery_email():
+    return jsonify({"email": db.get_recovery_email(session["user"])})
+
+
+@app.route("/api/auth/recovery-email", methods=["POST"])
+@login_required
+def route_set_recovery_email():
+    data  = request.get_json(force=True) or {}
+    email = data.get("email", "").strip()
+    db.set_recovery_email(session["user"], email)
+    return jsonify({"ok": True, "msg": "Email de récupération enregistré"})
 
 
 @app.route("/api/auth/change-password", methods=["POST"])

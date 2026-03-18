@@ -24,6 +24,10 @@ h1{font-size:22px;font-weight:700;margin-bottom:4px}
 .btn:hover{opacity:.9}
 .error{background:rgba(252,129,129,.12);color:var(--red);padding:10px;border-radius:8px;
   font-size:13px;margin-bottom:16px}
+.success{background:rgba(72,187,120,.12);color:#48bb78;padding:10px;border-radius:8px;
+  font-size:13px;margin-bottom:16px}
+.link-row{margin-top:14px;font-size:13px;text-align:center;color:var(--muted)}
+.link-row a{color:var(--blue)}
 </style>
 </head>
 <body>
@@ -32,6 +36,7 @@ h1{font-size:22px;font-weight:700;margin-bottom:4px}
   <h1>Freebox Monitor</h1>
   <p class="sub">Connectez-vous pour accéder au dashboard</p>
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  {% if success %}<div class="success">{{ success }}</div>{% endif %}
   <form method="POST" action="/login">
     <div class="form-group">
       <label>Nom d'utilisateur</label>
@@ -43,6 +48,7 @@ h1{font-size:22px;font-weight:700;margin-bottom:4px}
     </div>
     <button type="submit" class="btn">Connexion</button>
   </form>
+  <div class="link-row"><a href="/forgot-password">Mot de passe oublié ?</a></div>
 </div>
 </body>
 </html>
