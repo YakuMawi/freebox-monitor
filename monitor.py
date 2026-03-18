@@ -520,6 +520,16 @@ def render_monthly_report(year: int, month: int) -> str:
             f"<td>{o['duration_fmt']}</td><td>{o.get('cause','—')}</td></tr>"
         )
 
+    # Pré-calcul du tableau des coupures (évite f-string imbriqué, incompatible Python < 3.12)
+    if outage_rows:
+        outage_section = (
+            "<table><tr><th>Début</th><th>Fin</th><th>Durée</th><th>Cause</th></tr>"
+            + outage_rows
+            + "</table>"
+        )
+    else:
+        outage_section = "<p style='color:#718096;font-size:13px'>Aucune coupure ce mois.</p>"
+
     def stat(v, fmt_fn=None, unit=""):
         if v is None: return "—"
         return (fmt_fn(v) if fmt_fn else str(round(v, 1))) + unit
@@ -568,11 +578,7 @@ def render_monthly_report(year: int, month: int) -> str:
 </table>
 
 <h2>Journal des coupures</h2>
-{"<p style='color:#718096;font-size:13px'>Aucune coupure ce mois.</p>" if not outage_rows else f"""
-<table>
-  <tr><th>Début</th><th>Fin</th><th>Durée</th><th>Cause</th></tr>
-  {outage_rows}
-</table>"""}
+{outage_section}
 
 </body></html>"""
 
