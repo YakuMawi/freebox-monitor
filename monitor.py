@@ -84,6 +84,7 @@ _current_outage_id = None
 _last_conn_state   = None
 _last_ipv4         = "?"
 _last_prune        = 0
+_test_mode_active  = False
 
 # Rate limiting : {ip: [timestamp, ...]}
 _rate_login        = {}
@@ -398,10 +399,13 @@ def process_connectivity(conn_state: str, ts: int):
 
     if was_up and not is_up:
         # Transition up -> down
-        oid = db.open_outage(ts, "connexion perdue")
+        test = _test_mode_active
+        cause = "test volontaire" if test else "connexion perdue"
+        oid = db.open_outage(ts, cause, is_test=1 if test else 0)
         _current_outage_id = oid
-        log.warning("Perte de connexion détectée à %s", datetime.fromtimestamp(ts))
-        _schedule_outage_alert(ts, _last_ipv4)
+        log.warning("Perte de connexion détectée à %s (test=%s)", datetime.fromtimestamp(ts), test)
+        if not test:
+            _schedule_outage_alert(ts, _last_ipv4)
 
     elif not was_up and is_up:
         # Transition down -> up
@@ -781,6 +785,45 @@ def route_outages():
     limit  = min(int(request.args.get("limit", 50)), 200)
     offset = int(request.args.get("offset", 0))
     return jsonify(db.get_outages(limit, offset))
+
+
+@app.route("/api/outages/reset-days", methods=["POST"])
+@login_required
+def route_reset_outage_days():
+    data  = request.get_json(force=True) or {}
+    dates = data.get("dates", [])
+    if not isinstance(dates, list) or not dates:
+        return jsonify({"ok": False, "msg": "dates doit être une liste non vide"}), 400
+    db.reset_outages_by_days(dates)
+    return jsonify({"ok": True, "msg": f"{len(dates)} jour(s) réinitialisé(s)"})
+
+
+@app.route("/api/outages/<int:outage_id>", methods=["PATCH"])
+@login_required
+def route_patch_outage(outage_id):
+    data    = request.get_json(force=True) or {}
+    is_test = int(bool(data["is_test"])) if "is_test" in data else None
+    note    = data.get("note")   # None = ne pas modifier la note
+    db.mark_outage(outage_id, is_test, note)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/test-mode", methods=["GET"])
+@login_required
+def route_test_mode_get():
+    with _lock:
+        return jsonify({"active": _test_mode_active})
+
+
+@app.route("/api/test-mode", methods=["POST"])
+@login_required
+def route_test_mode_set():
+    global _test_mode_active
+    data = request.get_json(force=True) or {}
+    with _lock:
+        _test_mode_active = bool(data.get("active", False))
+    log.info("Mode test %s", "activé" if _test_mode_active else "désactivé")
+    return jsonify({"active": _test_mode_active})
 
 
 @app.route("/api/calendar")

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Freebox Monitor</title>
 <script>(function(){var t=localStorage.getItem('fbx-theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="/static/chart.umd.min.js"></script>
 <style>
 :root{
   --bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--text:#e2e8f0;--muted:#718096;
@@ -146,8 +146,6 @@ header{display:flex;align-items:center;justify-content:space-between;
 .modal h3{font-size:17px;font-weight:700;margin-bottom:20px}
 .form-group{margin-bottom:14px}
 .form-group label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:600}
-.form-group input,.form-group select{width:100%;background:#0f1117;border:1px solid var(--border);
-  border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px}
 .form-group input:focus,.form-group select:focus{outline:none;border-color:var(--blue)}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .form-check{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}
@@ -167,6 +165,33 @@ header{display:flex;align-items:center;justify-content:space-between;
 /* Error banner */
 #error-banner{display:none;background:rgba(252,129,129,.1);border:1px solid var(--red);
   color:var(--red);padding:10px 16px;border-radius:8px;margin-bottom:14px;font-size:13px}
+
+/* Test mode banner */
+#test-mode-banner{display:none;background:rgba(237,137,54,.12);border:1px solid var(--orange);
+  color:var(--orange);padding:10px 16px;border-radius:8px;margin-bottom:14px;font-size:13px;
+  display:flex;align-items:center;justify-content:space-between;gap:12px}
+#test-mode-banner.active{display:flex}
+#test-mode-banner.inactive{display:none}
+
+/* Test mode button */
+.btn-test{background:rgba(237,137,54,.1);border-color:var(--orange);color:var(--orange)}
+.btn-test.on{background:var(--orange);color:#fff}
+
+/* Outage type badges */
+.badge-real{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;
+  background:rgba(252,129,129,.15);color:var(--red);cursor:pointer;user-select:none}
+.badge-test-outage{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;
+  background:rgba(66,153,225,.15);color:var(--blue);cursor:pointer;user-select:none}
+
+/* Inline note input */
+.note-cell{font-size:12px;color:var(--muted);max-width:160px}
+.note-cell input{background:var(--bg);border:1px solid var(--border);border-radius:4px;
+  color:var(--text);font-size:12px;padding:3px 7px;width:100%;outline:none}
+.note-cell input:focus{border-color:var(--blue)}
+
+/* Modal form inputs light mode fix */
+.form-group input,.form-group select{width:100%;background:var(--bg);border:1px solid var(--border);
+  border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px}
 
 /* Value colors */
 .vc-blue{color:var(--blue)} .vc-green{color:var(--green)} .vc-orange{color:var(--orange)}
@@ -213,11 +238,17 @@ header{display:flex;align-items:center;justify-content:space-between;
 
 <div id="error-banner"></div>
 
+<div id="test-mode-banner" class="inactive">
+  <span>⚠️ Mode test actif — les coupures détectées seront marquées comme tests et exclues des statistiques</span>
+  <button class="btn btn-test on" style="padding:4px 12px;font-size:12px" onclick="toggleTestMode()">Désactiver</button>
+</div>
+
 <!-- TOOLBAR -->
 <div id="toolbar">
   <span style="font-size:12px;color:var(--muted);font-weight:600">Tuiles :</span>
   <button class="btn" onclick="toggleAllTiles(true)">Tout afficher</button>
   <button class="btn" onclick="toggleAllTiles(false)">Tout masquer</button>
+  <button class="btn btn-test" id="btn-test-mode" onclick="toggleTestMode()">🧪 Mode test</button>
   <div id="tile-selector"></div>
 </div>
 
@@ -302,7 +333,7 @@ header{display:flex;align-items:center;justify-content:space-between;
   </div>
   <div class="stats-grid" id="period-stats-grid">
     <div class="stat-box"><div class="val" id="ps-uptime">—</div><div class="lbl">Disponibilité</div></div>
-    <div class="stat-box"><div class="val" id="ps-outages">—</div><div class="lbl">Coupures</div></div>
+    <div class="stat-box"><div class="val" id="ps-outages">—</div><div class="lbl">Coupures réelles</div><div class="lbl" id="ps-test-count" style="color:var(--blue);margin-top:2px"></div></div>
     <div class="stat-box"><div class="val" id="ps-outage-dur">—</div><div class="lbl">Durée totale coupures</div></div>
     <div class="stat-box"><div class="val" id="ps-avg-down">—</div><div class="lbl">Débit desc. moyen</div></div>
     <div class="stat-box"><div class="val" id="ps-max-down">—</div><div class="lbl">Débit desc. max</div></div>
@@ -393,7 +424,8 @@ header{display:flex;align-items:center;justify-content:space-between;
     <div class="cal-legend-item"><div class="cal-legend-box" style="background:#48bb78"></div>≥95%</div>
     <div class="cal-legend-item"><div class="cal-legend-box" style="background:#ed8936"></div>≥80%</div>
     <div class="cal-legend-item"><div class="cal-legend-box" style="background:#fc8181"></div>&lt;80%</div>
-    <div class="cal-legend-item"><div class="cal-legend-box" style="background:#2a2d3a"></div>Pas de données</div>
+    <div class="cal-legend-item"><div class="cal-legend-box" style="background:#3182ce"></div>Tests seuls</div>
+    <div class="cal-legend-item"><div class="cal-legend-box" id="cal-legend-nodata" style="background:#2a2d3a"></div>Pas de données</div>
   </div>
 </div>
 
@@ -424,11 +456,14 @@ header{display:flex;align-items:center;justify-content:space-between;
 <div class="tile-section card" id="tile-outages" style="margin-bottom:14px">
   <div class="card-title">Journal des coupures</div>
   <table class="data-table">
-    <thead><tr><th>Début</th><th>Fin</th><th>Durée</th><th>Cause</th></tr></thead>
+    <thead><tr><th>Début</th><th>Fin</th><th>Durée</th><th>Type</th><th>Cause / Note</th></tr></thead>
     <tbody id="outages-body"></tbody>
   </table>
-  <div style="margin-top:10px">
+  <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
     <button class="btn" id="btn-more-outages" onclick="loadMoreOutages()">Charger plus</button>
+    <span style="font-size:12px;color:var(--muted);margin-left:8px">Marquer un jour comme tests :</span>
+    <input type="date" id="reset-day-input" style="padding:5px 10px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;outline:none">
+    <button class="btn btn-test" onclick="resetOutageDay()">Appliquer</button>
   </div>
 </div>
 
@@ -765,6 +800,8 @@ function updateStats(s){
   const f=fmtBps;
   setText('ps-uptime',    s.uptime_pct!=null?s.uptime_pct+'%':'—');
   setText('ps-outages',   s.outage_count??'—');
+  const tc=s.test_outage_count||0;
+  setText('ps-test-count', tc>0?`+${tc} test${tc>1?'s':''}` : '');
   setText('ps-outage-dur',s.outage_total_fmt||'—');
   setText('ps-avg-down',  s.avg_down!=null?f(s.avg_down):'—');
   setText('ps-max-down',  s.max_down!=null?f(s.max_down):'—');
@@ -783,23 +820,29 @@ const MON=['Janvier','Février','Mars','Avril','Mai','Juin',
 
 function calNav(d){ calMonth+=d; if(calMonth>12){calMonth=1;calYear++;} if(calMonth<1){calMonth=12;calYear--;} fetchCalendar(); }
 
-function uptimeColor(pct){
-  if(pct==null) return '#2a2d3a';
-  if(pct>=99) return '#276749';
-  if(pct>=95) return '#48bb78';
-  if(pct>=80) return '#ed8936';
+function uptimeColor(pct, isTestOnly){
+  if(isTestOnly) return '#3182ce';
+  if(pct==null)  return null; // caller uses theme-aware no-data color
+  if(pct>=99)  return '#276749';
+  if(pct>=95)  return '#48bb78';
+  if(pct>=80)  return '#ed8936';
   return '#fc8181';
 }
 
 function renderCalendar(data){
   setText('cal-month-label', MON[calMonth-1]+' '+calYear);
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  const noDataBg   = isDark ? '#2a2d3a' : '#dde3ec';
+  const noDataText = isDark ? '#718096' : '#8a9ab0';
   const y=calYear, m=calMonth;
-  const firstDay=new Date(y,m-1,1).getDay(); // 0=Sun
+  const firstDay=new Date(y,m-1,1).getDay();
   const daysInMonth=new Date(y,m,0).getDate();
-  // Convert Sunday=0 to Monday=0
   const startOffset=(firstDay+6)%7;
   const tbody=document.getElementById('cal-body');
   tbody.innerHTML='';
+  // Update legend no-data box
+  const ndBox=document.getElementById('cal-legend-nodata');
+  if(ndBox) ndBox.style.background=noDataBg;
   let day=1;
   for(let week=0;week<6;week++){
     const tr=document.createElement('tr');
@@ -814,11 +857,18 @@ function renderCalendar(data){
         const ds=y+'-'+String(m).padStart(2,'0')+'-'+String(day).padStart(2,'0');
         const d=data[ds];
         const pct=d?d.uptime_pct:null;
-        td.style.background=uptimeColor(pct);
-        td.style.color='#fff';
-        const tip=d?`${ds}\nDisponibilité: ${pct}%\nDébit moy ↓: ${fmtBps(d.avg_down||0)}`:`${ds}\nPas de données`;
+        const realCnt=d?d.real_outage_count||0:0;
+        const testCnt=d?d.test_outage_count||0:0;
+        const isTestOnly=(testCnt>0&&realCnt===0);
+        const bg=uptimeColor(pct,isTestOnly)||noDataBg;
+        td.style.background=bg;
+        td.style.color=(pct!=null||isTestOnly)?'#fff':noDataText;
+        let tip=d?`${ds}\nDisponibilité: ${pct}%\nDébit moy ↓: ${fmtBps(d.avg_down||0)}`:`${ds}\nPas de données`;
+        if(testCnt>0) tip+=`\n🧪 ${testCnt} test${testCnt>1?'s':''}`;
+        if(realCnt>0) tip+=`\n⚠️ ${realCnt} panne${realCnt>1?'s':''}`;
         td.title=tip;
-        td.innerHTML=`<div><div style="font-weight:700">${day}</div><div style="font-size:10px;opacity:.75">${pct!=null?pct+'%':'—'}</div></div>`;
+        const testMark=isTestOnly?'<div style="font-size:9px;opacity:.85">🧪</div>':'';
+        td.innerHTML=`<div><div style="font-weight:700">${day}</div><div style="font-size:10px;opacity:.8">${pct!=null?pct+'%':'—'}</div>${testMark}</div>`;
         day++;
       }
       tr.appendChild(td);
@@ -879,20 +929,44 @@ function updateOutages(rows, append=false){
   const tb=document.getElementById('outages-body');
   if(!append) tb.innerHTML='';
   if(!rows||!rows.length){
-    if(!append) tb.innerHTML='<tr><td colspan="4" style="color:var(--muted)">Aucune coupure enregistrée</td></tr>';
+    if(!append) tb.innerHTML='<tr><td colspan="5" style="color:var(--muted)">Aucune coupure enregistrée</td></tr>';
     document.getElementById('btn-more-outages').style.display='none';
     return;
   }
   rows.forEach(o=>{
     const ongoing=!o.ended_at;
+    const isTest=o.is_test===1||o.is_test===true;
+    const badgeHtml=isTest
+      ?`<span class="badge-test-outage" title="Cliquer pour marquer comme réelle" onclick="toggleOutageType(${o.id},false)">🧪 Test</span>`
+      :`<span class="badge-real" title="Cliquer pour marquer comme test" onclick="toggleOutageType(${o.id},true)">⚠️ Réelle</span>`;
+    const noteHtml=`<div class="note-cell">
+      <span class="note-text" id="note-text-${o.id}" onclick="editNote(${o.id})" title="Cliquer pour modifier" style="cursor:pointer">${o.note||'<span style=opacity:.4>—</span>'}</span>
+    </div>`;
+    const causeHtml=ongoing
+      ?`<span class="badge br">En cours</span>`
+      :`<span style="font-size:11px;color:var(--muted)">${o.cause||''}</span>`;
     tb.innerHTML+=`<tr>
       <td>${o.started_fmt||'—'}</td>
       <td>${o.ended_fmt||'—'}</td>
       <td>${o.duration_fmt||'—'}</td>
-      <td>${ongoing?'<span class="badge br">En cours</span>':o.cause||'—'}</td>
+      <td>${badgeHtml}</td>
+      <td>${causeHtml}${noteHtml}</td>
     </tr>`;
   });
   document.getElementById('btn-more-outages').style.display='block';
+}
+function toggleOutageType(id, makeTest){
+  fetch(`/api/outages/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({is_test:makeTest})})
+  .then(()=>{ outagesOffset=0; fetchOutages(); });
+}
+function editNote(id){
+  const note=prompt('Note pour cette coupure (laisser vide pour effacer) :',
+    document.getElementById('note-text-'+id)?.innerText.trim()||'');
+  if(note===null) return; // annulé
+  fetch(`/api/outages/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({note})})
+  .then(()=>{ outagesOffset=0; fetchOutages(); });
 }
 function loadMoreOutages(){
   outagesOffset+=50;
@@ -918,6 +992,53 @@ function openReport(){
 document.querySelectorAll('.modal-backdrop').forEach(mb=>{
   mb.addEventListener('click',e=>{ if(e.target===mb) mb.classList.remove('open'); });
 });
+
+// ─────────────────────────────────────────
+// Test mode
+// ─────────────────────────────────────────
+let _testModeActive=false;
+
+async function checkTestMode(){
+  try{
+    const r=await fetch('/api/test-mode');
+    const d=await r.json();
+    _setTestModeUI(d.active);
+  }catch(e){}
+}
+
+async function toggleTestMode(){
+  try{
+    const r=await fetch('/api/test-mode',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({active:!_testModeActive})});
+    const d=await r.json();
+    _setTestModeUI(d.active);
+  }catch(e){}
+}
+
+function _setTestModeUI(active){
+  _testModeActive=active;
+  const banner=document.getElementById('test-mode-banner');
+  const btn=document.getElementById('btn-test-mode');
+  if(banner){ banner.className=active?'active':'inactive'; }
+  if(btn){
+    btn.textContent=active?'🧪 Mode test ON':'🧪 Mode test';
+    btn.classList.toggle('on',active);
+  }
+}
+
+async function resetOutageDay(){
+  const inp=document.getElementById('reset-day-input');
+  const date=inp.value;
+  if(!date){ alert('Sélectionnez une date.'); return; }
+  if(!confirm(`Marquer toutes les coupures du ${date} comme tests ?`)) return;
+  const r=await fetch('/api/outages/reset-days',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({dates:[date]})});
+  const d=await r.json();
+  if(d.ok){ outagesOffset=0; fetchOutages(); fetchCalendar(); }
+  else alert('Erreur: '+d.msg);
+}
 
 // ─────────────────────────────────────────
 // Fetch functions
@@ -989,6 +1110,7 @@ fastRefresh();
 slowRefresh();
 fetchOutages();
 fetchCalendar();
+checkTestMode();
 
 // Poll intervals
 setInterval(fastRefresh, 10000);
@@ -1002,6 +1124,7 @@ function toggleTheme(){
   document.documentElement.setAttribute('data-theme',next);
   localStorage.setItem('fbx-theme',next);
   document.getElementById('theme-btn').textContent=next==='dark'?'☀️':'🌙';
+  fetchCalendar(); // re-render calendar with correct theme colors
 }
 (function(){
   const t=document.documentElement.getAttribute('data-theme')||'dark';

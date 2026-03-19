@@ -12,9 +12,14 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "free
 
 def _migrate(c):
     """Migrations incrémentales sur la DB existante."""
-    cols = [r[1] for r in c.execute("PRAGMA table_info(users)").fetchall()]
-    if "recovery_email" not in cols:
+    cols_users = [r[1] for r in c.execute("PRAGMA table_info(users)").fetchall()]
+    if "recovery_email" not in cols_users:
         c.execute("ALTER TABLE users ADD COLUMN recovery_email TEXT DEFAULT ''")
+    cols_out = [r[1] for r in c.execute("PRAGMA table_info(outages)").fetchall()]
+    if "is_test" not in cols_out:
+        c.execute("ALTER TABLE outages ADD COLUMN is_test INTEGER DEFAULT 0")
+    if "note" not in cols_out:
+        c.execute("ALTER TABLE outages ADD COLUMN note TEXT DEFAULT ''")
 
 
 def init_db():
@@ -146,13 +151,17 @@ def get_period_stats(since_ts: int) -> dict:
             FROM metrics WHERE ts >= ?
         """, (since_ts,)).fetchone()
         out_row = c.execute("""
-            SELECT COUNT(*) AS cnt, COALESCE(SUM(duration_s), 0) AS total_s
+            SELECT
+                SUM(CASE WHEN is_test=0 THEN 1 ELSE 0 END) AS cnt,
+                SUM(CASE WHEN is_test=1 THEN 1 ELSE 0 END) AS test_cnt,
+                COALESCE(SUM(CASE WHEN is_test=0 THEN duration_s ELSE 0 END), 0) AS total_s
             FROM outages
             WHERE started_at >= ? AND ended_at IS NOT NULL
         """, (since_ts,)).fetchone()
     result = dict(row) if row else {}
-    result["outage_count"]      = out_row["cnt"]   if out_row else 0
-    result["outage_total_s"]    = out_row["total_s"] if out_row else 0
+    result["outage_count"]      = out_row["cnt"]      if out_row else 0
+    result["test_outage_count"] = out_row["test_cnt"] if out_row else 0
+    result["outage_total_s"]    = out_row["total_s"]  if out_row else 0
     result["outage_total_fmt"]  = _fmt_dur(result.get("outage_total_s", 0))
     samples = result.get("samples") or 0
     up_s    = result.get("up_samples") or 0
@@ -164,6 +173,8 @@ def get_daily_uptime(year: int, month: int) -> dict:
     _, days = monthrange(year, month)
     start_dt = datetime(year, month, 1)
     end_dt   = datetime(year, month, days, 23, 59, 59)
+    start_ts = int(start_dt.timestamp())
+    end_ts   = int(end_dt.timestamp())
     with _conn() as c:
         rows = c.execute("""
             SELECT
@@ -178,11 +189,27 @@ def get_daily_uptime(year: int, month: int) -> dict:
             WHERE ts >= ? AND ts <= ?
             GROUP BY DATE(ts, 'unixepoch', 'localtime')
             ORDER BY day
-        """, (int(start_dt.timestamp()), int(end_dt.timestamp()))).fetchall()
+        """, (start_ts, end_ts)).fetchall()
+        out_rows = c.execute("""
+            SELECT
+                DATE(started_at, 'unixepoch', 'localtime') AS day,
+                SUM(CASE WHEN is_test=0 THEN 1 ELSE 0 END) AS real_cnt,
+                SUM(CASE WHEN is_test=1 THEN 1 ELSE 0 END) AS test_cnt
+            FROM outages
+            WHERE started_at >= ? AND started_at <= ? AND ended_at IS NOT NULL
+            GROUP BY DATE(started_at, 'unixepoch', 'localtime')
+        """, (start_ts, end_ts)).fetchall()
+    outage_by_day = {
+        r["day"]: {"real_cnt": r["real_cnt"] or 0, "test_cnt": r["test_cnt"] or 0}
+        for r in out_rows
+    }
     result = {}
     for r in rows:
         d = dict(r)
         d["uptime_pct"] = round(d["up_cnt"] / d["total"] * 100, 1) if d["total"] > 0 else 0
+        o = outage_by_day.get(d["day"], {})
+        d["real_outage_count"] = o.get("real_cnt", 0)
+        d["test_outage_count"] = o.get("test_cnt", 0)
         result[d["day"]] = d
     return result
 
@@ -211,12 +238,12 @@ def get_daily_stats(days: int = 90) -> list:
     return result
 
 
-def open_outage(ts: int, cause: str = "connexion perdue") -> int:
+def open_outage(ts: int, cause: str = "connexion perdue", is_test: int = 0) -> int:
     with _conn() as c:
         existing = c.execute("SELECT id FROM outages WHERE ended_at IS NULL").fetchone()
         if existing:
             return existing["id"]
-        c.execute("INSERT INTO outages(started_at, cause) VALUES(?,?)", (ts, cause))
+        c.execute("INSERT INTO outages(started_at, cause, is_test) VALUES(?,?,?)", (ts, cause, is_test))
         return c.execute("SELECT last_insert_rowid()").fetchone()[0]
 
 
@@ -245,6 +272,8 @@ def get_outages(limit: int = 50, offset: int = 0) -> list:
         d["duration_fmt"]  = _fmt_dur(d.get("duration_s"))
         d["started_fmt"]   = _ts_fmt(d.get("started_at"))
         d["ended_fmt"]     = _ts_fmt(d.get("ended_at")) if d.get("ended_at") else "En cours"
+        d["is_test"]       = int(d.get("is_test") or 0)
+        d["note"]          = d.get("note") or ""
         result.append(d)
     return result
 
@@ -335,6 +364,34 @@ def verify_reset_code(username: str, code: str):
 def consume_reset_code(code_id: int):
     with _conn() as c:
         c.execute("UPDATE reset_codes SET used=1 WHERE id=?", (code_id,))
+
+
+def mark_outage(outage_id: int, is_test=None, note: str = None):
+    """Qualifier une coupure comme test/réelle et/ou modifier sa note.
+    Passer is_test=None pour ne pas toucher au champ is_test."""
+    with _conn() as c:
+        if is_test is not None and note is not None:
+            c.execute("UPDATE outages SET is_test=?, note=? WHERE id=?", (is_test, note, outage_id))
+        elif is_test is not None:
+            c.execute("UPDATE outages SET is_test=? WHERE id=?", (is_test, outage_id))
+        elif note is not None:
+            c.execute("UPDATE outages SET note=? WHERE id=?", (note, outage_id))
+
+
+def reset_outages_by_days(date_list: list):
+    """Marquer toutes les coupures des jours donnés comme is_test=1."""
+    with _conn() as c:
+        for date_str in date_list:
+            try:
+                dt = datetime.strptime(date_str, "%Y-%m-%d")
+                day_start = int(dt.timestamp())
+                day_end   = int((dt + timedelta(days=1)).timestamp()) - 1
+                c.execute(
+                    "UPDATE outages SET is_test=1 WHERE started_at >= ? AND started_at <= ?",
+                    (day_start, day_end)
+                )
+            except (ValueError, TypeError):
+                pass
 
 
 def seed_config(defaults: dict):
