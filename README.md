@@ -381,6 +381,7 @@ rm -rf /root/freebox-monitor
 
 | Version | Points clés |
 |---|---|
+| **1.0.7** | Correction fiabilité des statistiques de coupure : la ré-authentification Freebox est invalidée dès qu'une requête échoue, ce qui permet au monitor de détecter la remontée de la box sans rester bloqué sur un token de session périmé |
 | **1.0.6** | Thème clair/sombre sur toutes les pages, auto-refresh après MAJ, downgrade depuis l'interface, repo GitHub pré-configuré |
 | **1.0.5** | Installation one-liner via curl (`bootstrap.sh`), installation automatique des dépendances système, section désinstallation |
 | **1.0.4** | Correction compatibilité Python < 3.12 (SyntaxError f-string imbriqué) |

@@ -151,11 +151,20 @@ def get_session():
 
 
 def fbx_get(path):
+    global _session_token, _session_time
     token = get_session()
-    r = requests.get(api_url(path), headers={"X-Fbx-App-Auth": token}, timeout=10)
-    r.raise_for_status()
-    data = r.json()
+    try:
+        r = requests.get(api_url(path), headers={"X-Fbx-App-Auth": token}, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+    except Exception:
+        # Invalidate cached session so next cycle re-authenticates (e.g. after box reboot)
+        _session_token = None
+        _session_time  = 0
+        raise
     if not data.get("success"):
+        _session_token = None
+        _session_time  = 0
         raise RuntimeError(f"API error {path}: {data.get('msg', data)}")
     return data["result"]
 
