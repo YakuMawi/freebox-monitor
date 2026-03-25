@@ -1014,9 +1014,17 @@ def route_update_apply():
 
 
 def _restart_service():
-    """Attempt to restart the systemd service after update."""
+    """Restart after update — via systemd if available, otherwise exit (Docker restart policy)."""
     time.sleep(2)
-    subprocess.run(["systemctl", "restart", "freebox-monitor.service"], capture_output=True)
+    result = subprocess.run(
+        ["systemctl", "restart", "freebox-monitor.service"],
+        capture_output=True
+    )
+    if result.returncode != 0:
+        # Pas de systemd (Docker, lancement direct…) → on quitte proprement.
+        # Docker relance le conteneur automatiquement grâce à restart: unless-stopped.
+        log.info("systemctl non disponible — arrêt du processus pour redémarrage supervisé")
+        os._exit(0)
 
 
 # ──────────────────────────────────────────────
