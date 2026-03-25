@@ -3,10 +3,11 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg"/>
 <title>Freebox Monitor</title>
-<script>(function(){var t=localStorage.getItem('fbx-theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>
+<script nonce="{{ g.csp_nonce }}">(function(){var t=localStorage.getItem('fbx-theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>
 <script src="/static/chart.umd.min.js"></script>
-<style>
+<style nonce="{{ g.csp_nonce }}">
 :root{
   --bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--text:#e2e8f0;--muted:#718096;
   --blue:#4299e1;--green:#48bb78;--orange:#ed8936;--red:#fc8181;--purple:#9f7aea;
@@ -26,7 +27,7 @@ header{display:flex;align-items:center;justify-content:space-between;
   padding:14px 20px;background:var(--card);border:1px solid var(--border);
   border-radius:12px;margin-bottom:16px;flex-wrap:wrap;gap:10px}
 .h-left{display:flex;align-items:center;gap:12px}
-.h-logo{font-size:26px}
+.h-logo{font-size:26px;display:flex;align-items:center}
 .h-title{font-size:18px;font-weight:700}
 .h-sub{font-size:12px;color:var(--muted);margin-top:2px}
 .h-center{text-align:center}
@@ -152,11 +153,14 @@ header{display:flex;align-items:center;justify-content:space-between;
 .form-check input{width:auto;cursor:pointer}
 
 
-/* Tile selector */
-#tile-selector{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}
+/* Tile selector & panel */
+#tile-panel{margin-bottom:16px}
+#tile-selector{display:flex;flex-wrap:wrap;gap:8px;padding:14px 16px}
 .tile-toggle-btn{padding:6px 12px;border-radius:20px;border:1px solid var(--border);
-  background:var(--card);color:var(--muted);font-size:12px;cursor:pointer}
+  background:var(--card);color:var(--muted);font-size:12px;cursor:pointer;white-space:nowrap}
 .tile-toggle-btn.active{background:rgba(66,153,225,.15);border-color:var(--blue);color:var(--blue)}
+/* Bouton toggle tuiles (desktop: caché) */
+#btn-tile-panel{display:none}
 
 /* Hidden tile */
 .tile-section{transition:opacity .3s}
@@ -198,10 +202,88 @@ header{display:flex;align-items:center;justify-content:space-between;
 .vc-red{color:var(--red)} .vc-purple{color:var(--purple)} .vc-cyan{color:var(--cyan)}
 .vc-yellow{color:var(--yellow)} .vc-teal{color:var(--teal)}
 
+/* Mobile bottom nav (hidden by default, shown on mobile) */
+.mobile-nav{display:none;position:fixed;bottom:0;left:0;right:0;z-index:90;
+  background:var(--card);border-top:1px solid var(--border);
+  padding:6px 0 calc(6px + env(safe-area-inset-bottom));justify-content:space-around}
+.mobile-nav-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;
+  font-size:10px;color:var(--muted);background:none;border:none;cursor:pointer;
+  padding:4px 2px;text-decoration:none;transition:color .2s;min-height:44px;
+  justify-content:center;font-family:inherit;font-weight:600}
+.mobile-nav-item:hover,.mobile-nav-item:active{color:var(--blue)}
+.mobile-nav-item.nav-danger{color:var(--red)}
+.mobile-nav-icon{font-size:20px;line-height:1}
+
 /* Responsive */
 @media(max-width:1100px){.g6{grid-template-columns:repeat(3,1fr)}}
-@media(max-width:800px){.g4,.g3,.g6{grid-template-columns:repeat(2,1fr)}.g2{grid-template-columns:1fr}}
-@media(max-width:520px){.g4,.g3,.g6,.g2{grid-template-columns:1fr}}
+@media(max-width:800px){
+  .g4,.g3,.g6{grid-template-columns:repeat(2,1fr)}
+  .g2{grid-template-columns:1fr}
+  .stats-grid{grid-template-columns:repeat(2,1fr)}
+}
+@media(max-width:768px){
+  body{padding:10px;padding-bottom:74px}
+  /* Header compact */
+  header{padding:10px 14px;gap:6px}
+  .h-center{order:3;width:100%;display:flex;align-items:baseline;justify-content:center;gap:8px}
+  #live-time{font-size:20px;margin-top:0}
+  /* Masquer les boutons d'action du header sur mobile (déplacés dans la nav du bas) */
+  .h-action-btns{display:none!important}
+  /* Toolbar centré sur mobile */
+  #toolbar{justify-content:center;flex-wrap:wrap;gap:8px}
+  /* Bouton toggle tuiles visible sur mobile */
+  #btn-tile-panel{display:inline-flex;align-items:center;gap:6px}
+  /* Panneau tuiles collapsible */
+  #tile-panel{
+    overflow:hidden;max-height:0;opacity:0;margin-bottom:0;
+    transition:max-height .35s cubic-bezier(.4,0,.2,1),opacity .3s ease,margin .3s ease}
+  #tile-panel.open{
+    max-height:300px;opacity:1;margin-bottom:16px;
+    background:var(--card);border:1px solid var(--border);border-radius:12px}
+  #tile-selector{flex-wrap:wrap;padding:12px}
+  /* Onglets scrollables */
+  .tab-bar{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;
+    scrollbar-width:none;padding-bottom:2px}
+  .tab-bar::-webkit-scrollbar{display:none}
+  .tab-btn{white-space:nowrap;min-height:40px;padding:8px 14px}
+  /* Zones de touch plus grandes */
+  .btn{min-height:40px;white-space:nowrap}
+  /* Tableaux scrollables sur petit écran */
+  .card{overflow-x:auto}
+  /* Calendrier */
+  .cal-table{min-width:260px}
+  /* Afficher la nav mobile */
+  .mobile-nav{display:flex}
+}
+@media(max-width:520px){
+  /* KPI gardés en 2 colonnes (plus lisible qu'une seule) */
+  .g6{grid-template-columns:repeat(2,1fr)}
+  .g4,.g3,.g2{grid-template-columns:1fr}
+}
+
+/* Update popup */
+#update-modal .upd-header{display:flex;align-items:center;gap:10px;margin-bottom:18px}
+#update-modal .upd-bell{font-size:28px;line-height:1}
+#update-modal .upd-title{font-size:17px;font-weight:700}
+#update-modal .upd-subtitle{font-size:12px;color:var(--muted);margin-top:2px}
+#update-modal .upd-version{display:flex;align-items:center;justify-content:center;
+  gap:14px;margin:0 0 18px;padding:14px;background:rgba(0,0,0,.12);border-radius:10px}
+[data-theme="light"] #update-modal .upd-version{background:rgba(0,0,0,.05)}
+#update-modal .upd-ver-block{text-align:center}
+#update-modal .upd-ver-label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:4px}
+#update-modal .upd-ver-num{font-size:20px;font-weight:700}
+#update-modal .upd-ver-num.old{color:var(--muted)}
+#update-modal .upd-ver-num.new{color:var(--green)}
+#update-modal .upd-arrow{font-size:20px;color:var(--muted)}
+#update-modal .upd-changelog-label{font-size:11px;font-weight:600;text-transform:uppercase;
+  letter-spacing:.08em;color:var(--muted);margin-bottom:6px}
+#update-modal .upd-changelog{background:rgba(0,0,0,.12);border-radius:8px;padding:12px;
+  font-size:12px;color:var(--text);max-height:160px;overflow-y:auto;
+  white-space:pre-wrap;margin-bottom:20px;font-family:monospace;line-height:1.5}
+[data-theme="light"] #update-modal .upd-changelog{background:rgba(0,0,0,.05)}
+#update-modal .upd-actions{display:flex;gap:10px;justify-content:flex-end}
+#update-modal .upd-status{font-size:12px;color:var(--muted);margin-right:auto;
+  align-self:center;display:none}
 </style>
 </head>
 <body>
@@ -209,7 +291,16 @@ header{display:flex;align-items:center;justify-content:space-between;
 <!-- HEADER -->
 <header>
   <div class="h-left">
-    <div class="h-logo">📡</div>
+    <div class="h-logo">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="40" height="40">
+        <rect width="40" height="40" rx="8" fill="#1a1a2e"/>
+        <text x="6" y="31" font-family="Arial Black, sans-serif" font-weight="900" font-size="30" fill="#e94560">F</text>
+        <circle cx="33" cy="9" r="2.5" fill="#e94560" opacity="0.4"/>
+        <circle cx="33" cy="17" r="2.5" fill="#e94560" opacity="0.65"/>
+        <circle cx="33" cy="25" r="2.5" fill="#e94560" opacity="0.9"/>
+        <line x1="23" y1="17" x2="29" y2="17" stroke="#e94560" stroke-width="1.2" opacity="0.5"/>
+      </svg>
+    </div>
     <div>
       <div class="h-title">Freebox Monitor</div>
       <div class="h-sub" id="h-board">Freebox Delta S</div>
@@ -227,7 +318,7 @@ header{display:flex;align-items:center;justify-content:space-between;
       </div>
       <div id="last-update" style="margin-top:4px">Chargement...</div>
     </div>
-    <div style="display:flex;flex-direction:column;gap:6px">
+    <div class="h-action-btns" style="display:flex;flex-direction:column;gap:6px">
       <a href="/settings" class="btn btn-primary" style="text-decoration:none">⚙ Paramètres</a>
       <button class="btn" onclick="openReportModal()">📄 Rapport</button>
       <button class="btn" id="theme-btn" onclick="toggleTheme()">☀️</button>
@@ -245,10 +336,16 @@ header{display:flex;align-items:center;justify-content:space-between;
 
 <!-- TOOLBAR -->
 <div id="toolbar">
-  <span style="font-size:12px;color:var(--muted);font-weight:600">Tuiles :</span>
   <button class="btn" onclick="toggleAllTiles(true)">Tout afficher</button>
   <button class="btn" onclick="toggleAllTiles(false)">Tout masquer</button>
   <button class="btn btn-test" id="btn-test-mode" onclick="toggleTestMode()">🧪 Mode test</button>
+  <button class="btn" id="btn-tile-panel" onclick="toggleTilePanel()">
+    <span id="tile-panel-icon">⊞</span> Tuiles <span id="tile-panel-chevron">▾</span>
+  </button>
+</div>
+
+<!-- PANNEAU TUILES (collapsible sur mobile, toujours visible sur desktop) -->
+<div id="tile-panel">
   <div id="tile-selector"></div>
 </div>
 
@@ -497,7 +594,7 @@ header{display:flex;align-items:center;justify-content:space-between;
   </div>
 </div>
 
-<script>
+<script nonce="{{ g.csp_nonce }}">
 // ─────────────────────────────────────────
 // Tile system
 // ─────────────────────────────────────────
@@ -583,7 +680,8 @@ function startClock(){
 // ─────────────────────────────────────────
 function setText(id,v){ const e=document.getElementById(id); if(e) e.textContent=(v??'—'); }
 function setHTML(id,v){ const e=document.getElementById(id); if(e) e.innerHTML=(v??'—'); }
-function badge(ok,t,f){ return ok?`<span class="badge bg">${t}</span>`:`<span class="badge br">${f}</span>`; }
+function esc(s){ if(s==null)return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function badge(ok,t,f){ return ok?`<span class="badge bg">${esc(t)}</span>`:`<span class="badge br">${esc(f)}</span>`; }
 function fmtBps(bps){
   const b=bps*8;
   if(b>=1e9) return (b/1e9).toFixed(1)+' Gbit/s';
@@ -790,11 +888,11 @@ function updateCharts(rows){
 // Period stats
 // ─────────────────────────────────────────
 let activePeriod='24h';
-function setPeriod(p,btn){
+async function setPeriod(p,btn){
   activePeriod=p;
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
   if(btn) btn.classList.add('active');
-  fetchStats();
+  updateStats(await fetchStats());
 }
 function updateStats(s){
   const f=fmtBps;
@@ -886,8 +984,8 @@ function updateSwitch(ports){
   if(!ports||!ports.length){ tb.innerHTML='<tr><td colspan="6" style="color:var(--muted)">Aucun port</td></tr>'; return; }
   tb.innerHTML=ports.map(p=>`
     <tr>
-      <td>${p.name||'Port '+p.id}</td>
-      <td><span class="${p.link==='up'?'dot-green':'dot-gray'}"></span>${p.link||'—'}</td>
+      <td>${esc(p.name||'Port '+p.id)}</td>
+      <td><span class="${p.link==='up'?'dot-green':'dot-gray'}"></span>${esc(p.link||'—')}</td>
       <td>${p.speed?p.speed+' Mbps':p.link==='up'?'—':'down'}</td>
       <td>${p.rx_bytes?fmtBytes(p.rx_bytes):'—'}</td>
       <td>${p.tx_bytes?fmtBytes(p.tx_bytes):'—'}</td>
@@ -901,9 +999,9 @@ function updateStorage(st){
   let html='';
   (st.disks||[]).forEach(d=>{
     html+=`<div style="margin-bottom:12px">
-      <div style="font-weight:600;margin-bottom:6px">💾 ${d.model||d.type||'Disque'} ${d.serial?'('+d.serial+')':''}</div>
+      <div style="font-weight:600;margin-bottom:6px">💾 ${esc(d.model||d.type||'Disque')} ${d.serial?'('+esc(d.serial)+')':''}</div>
       <div class="info-row"><span class="info-key">État</span><span class="info-val">${badge(d.state==='enabled','Actif',d.state||'—')}</span></div>
-      <div class="info-row"><span class="info-key">Capacité</span><span class="info-val">${d.total_fmt||'—'}</span></div>
+      <div class="info-row"><span class="info-key">Capacité</span><span class="info-val">${esc(d.total_fmt||'—')}</span></div>
       <div class="info-row"><span class="info-key">Température</span><span class="info-val" style="color:${tempColor(d.temp||0)}">${d.temp?d.temp+'°C':'—'}</span></div>
       <div class="info-row"><span class="info-key">Rotation</span><span class="info-val">${d.spinning?'Active':'Arrêtée'}</span></div>
     </div>`;
@@ -912,10 +1010,10 @@ function updateStorage(st){
     const pct=p.used_pct||0;
     const barColor=pct>=90?'var(--red)':pct>=70?'var(--orange)':'var(--green)';
     html+=`<div style="margin-bottom:12px">
-      <div style="font-weight:600;margin-bottom:6px">📁 ${p.label||'Partition'} (${p.fstype||'?'})</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:4px">${p.used_fmt||'—'} utilisés / ${p.total_fmt||'—'} total</div>
+      <div style="font-weight:600;margin-bottom:6px">📁 ${esc(p.label||'Partition')} (${esc(p.fstype||'?')})</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:4px">${esc(p.used_fmt||'—')} utilisés / ${esc(p.total_fmt||'—')} total</div>
       <div class="storage-bar"><div class="storage-fill" style="width:${pct}%;background:${barColor}"></div></div>
-      <div style="font-size:11px;color:var(--muted);margin-top:3px">${pct}% — Libre: ${p.free_fmt||'—'}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:3px">${pct}% — Libre: ${esc(p.free_fmt||'—')}</div>
     </div>`;
   });
   el.innerHTML=html;
@@ -940,15 +1038,15 @@ function updateOutages(rows, append=false){
       ?`<span class="badge-test-outage" title="Cliquer pour marquer comme réelle" onclick="toggleOutageType(${o.id},false)">🧪 Test</span>`
       :`<span class="badge-real" title="Cliquer pour marquer comme test" onclick="toggleOutageType(${o.id},true)">⚠️ Réelle</span>`;
     const noteHtml=`<div class="note-cell">
-      <span class="note-text" id="note-text-${o.id}" onclick="editNote(${o.id})" title="Cliquer pour modifier" style="cursor:pointer">${o.note||'<span style=opacity:.4>—</span>'}</span>
+      <span class="note-text" id="note-text-${o.id}" onclick="editNote(${o.id})" title="Cliquer pour modifier" style="cursor:pointer">${o.note?esc(o.note):'<span style="opacity:.4">—</span>'}</span>
     </div>`;
     const causeHtml=ongoing
       ?`<span class="badge br">En cours</span>`
-      :`<span style="font-size:11px;color:var(--muted)">${o.cause||''}</span>`;
+      :`<span style="font-size:11px;color:var(--muted)">${esc(o.cause||'')}</span>`;
     tb.innerHTML+=`<tr>
-      <td>${o.started_fmt||'—'}</td>
-      <td>${o.ended_fmt||'—'}</td>
-      <td>${o.duration_fmt||'—'}</td>
+      <td>${esc(o.started_fmt||'—')}</td>
+      <td>${esc(o.ended_fmt||'—')}</td>
+      <td>${esc(o.duration_fmt||'—')}</td>
       <td>${badgeHtml}</td>
       <td>${causeHtml}${noteHtml}</td>
     </tr>`;
@@ -956,7 +1054,7 @@ function updateOutages(rows, append=false){
   document.getElementById('btn-more-outages').style.display='block';
 }
 function toggleOutageType(id, makeTest){
-  fetch(`/api/outages/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},
+  fetch(`/api/outages/${id}`,{method:'PATCH',headers:_ch({'Content-Type':'application/json'}),
     body:JSON.stringify({is_test:makeTest})})
   .then(()=>{ outagesOffset=0; fetchOutages(); });
 }
@@ -964,7 +1062,7 @@ function editNote(id){
   const note=prompt('Note pour cette coupure (laisser vide pour effacer) :',
     document.getElementById('note-text-'+id)?.innerText.trim()||'');
   if(note===null) return; // annulé
-  fetch(`/api/outages/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},
+  fetch(`/api/outages/${id}`,{method:'PATCH',headers:_ch({'Content-Type':'application/json'}),
     body:JSON.stringify({note})})
   .then(()=>{ outagesOffset=0; fetchOutages(); });
 }
@@ -1009,7 +1107,7 @@ async function checkTestMode(){
 async function toggleTestMode(){
   try{
     const r=await fetch('/api/test-mode',{method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers:_ch({'Content-Type':'application/json'}),
       body:JSON.stringify({active:!_testModeActive})});
     const d=await r.json();
     _setTestModeUI(d.active);
@@ -1033,12 +1131,21 @@ async function resetOutageDay(){
   if(!date){ alert('Sélectionnez une date.'); return; }
   if(!confirm(`Marquer toutes les coupures du ${date} comme tests ?`)) return;
   const r=await fetch('/api/outages/reset-days',{method:'POST',
-    headers:{'Content-Type':'application/json'},
+    headers:_ch({'Content-Type':'application/json'}),
     body:JSON.stringify({dates:[date]})});
   const d=await r.json();
   if(d.ok){ outagesOffset=0; fetchOutages(); fetchCalendar(); }
   else alert('Erreur: '+d.msg);
 }
+
+// ─────────────────────────────────────────
+// CSRF
+// ─────────────────────────────────────────
+let _csrfToken='';
+async function initCsrf(){
+  try{ const r=await fetch('/api/csrf-token'); const d=await r.json(); _csrfToken=d.token||''; }catch(e){}
+}
+function _ch(extra){ return Object.assign({},extra,{'X-CSRF-Token':_csrfToken}); }
 
 // ─────────────────────────────────────────
 // Fetch functions
@@ -1105,7 +1212,64 @@ startClock();
   if(rm) rm.value=n.getMonth()+1;
 })();
 
+// ─────────────────────────────────────────
+// Update popup
+// ─────────────────────────────────────────
+async function checkUpdatePopup(){
+  if(sessionStorage.getItem('upd-dismissed')) return;
+  try{
+    const r=await fetch('/api/update/check');
+    if(!r.ok) return;
+    const d=await r.json();
+    if(!d.available) return;
+    document.getElementById('upd-current').textContent='v'+d.current;
+    document.getElementById('upd-latest').textContent='v'+d.latest;
+    document.getElementById('upd-changelog').textContent=d.changelog||'Pas de notes de version.';
+    document.getElementById('update-modal').classList.add('open');
+  }catch(e){}
+}
+function dismissUpdateModal(){
+  sessionStorage.setItem('upd-dismissed','1');
+  document.getElementById('update-modal').classList.remove('open');
+}
+async function applyUpdateFromModal(){
+  const applyBtn=document.getElementById('upd-apply-btn');
+  const dismissBtn=document.getElementById('upd-dismiss-btn');
+  const status=document.getElementById('upd-status');
+  applyBtn.disabled=true;
+  dismissBtn.disabled=true;
+  applyBtn.textContent='Mise à jour…';
+  status.style.display='inline';
+  status.textContent='Téléchargement en cours…';
+  try{
+    const r=await fetch('/api/update/apply',{
+      method:'POST',
+      headers:_ch({'Content-Type':'application/json'}),
+      body:JSON.stringify({})
+    });
+    const d=await r.json();
+    if(d.ok){
+      status.textContent='✓ Installée — redémarrage dans 4s…';
+      applyBtn.textContent='✓ Succès';
+      setTimeout(()=>location.reload(),4000);
+    }else{
+      status.style.display='none';
+      applyBtn.textContent='Mettre à jour';
+      applyBtn.disabled=false;
+      dismissBtn.disabled=false;
+      alert('Erreur : '+d.msg);
+    }
+  }catch(e){
+    status.style.display='none';
+    applyBtn.textContent='Mettre à jour';
+    applyBtn.disabled=false;
+    dismissBtn.disabled=false;
+    alert('Erreur réseau');
+  }
+}
+
 // Initial load
+initCsrf().then(()=>checkUpdatePopup());
 fastRefresh();
 slowRefresh();
 fetchOutages();
@@ -1117,20 +1281,93 @@ setInterval(fastRefresh, 10000);
 setInterval(slowRefresh, 60000);
 setInterval(fetchOutages, 120000);
 
+// Panneau tuiles (mobile)
+function toggleTilePanel(){
+  const panel=document.getElementById('tile-panel');
+  const chevron=document.getElementById('tile-panel-chevron');
+  const isOpen=panel.classList.toggle('open');
+  if(chevron) chevron.textContent=isOpen?'▴':'▾';
+}
+// Sur desktop, afficher le panneau tuiles immédiatement
+(function(){
+  if(window.innerWidth>768){
+    const p=document.getElementById('tile-panel');
+    if(p){p.style.transition='none';p.style.maxHeight='none';p.style.opacity='1';}
+  }
+})();
+
 // Thème
 function toggleTheme(){
   const cur=document.documentElement.getAttribute('data-theme')||'dark';
   const next=cur==='dark'?'light':'dark';
   document.documentElement.setAttribute('data-theme',next);
   localStorage.setItem('fbx-theme',next);
-  document.getElementById('theme-btn').textContent=next==='dark'?'☀️':'🌙';
+  const icon=next==='dark'?'☀️':'🌙';
+  const btn=document.getElementById('theme-btn');
+  if(btn) btn.textContent=icon;
+  const mobileIcon=document.getElementById('theme-icon-mobile');
+  if(mobileIcon) mobileIcon.textContent=icon;
   fetchCalendar(); // re-render calendar with correct theme colors
 }
 (function(){
   const t=document.documentElement.getAttribute('data-theme')||'dark';
+  const icon=t==='dark'?'☀️':'🌙';
   const btn=document.getElementById('theme-btn');
-  if(btn) btn.textContent=t==='dark'?'☀️':'🌙';
+  if(btn) btn.textContent=icon;
+  const mobileIcon=document.getElementById('theme-icon-mobile');
+  if(mobileIcon) mobileIcon.textContent=icon;
 })();
 </script>
+
+<!-- MODAL MISE À JOUR -->
+<div class="modal-backdrop" id="update-modal">
+  <div class="modal">
+    <div class="upd-header">
+      <span class="upd-bell">🔔</span>
+      <div>
+        <div class="upd-title">Mise à jour disponible</div>
+        <div class="upd-subtitle">Une nouvelle version de Freebox Monitor est disponible.</div>
+      </div>
+    </div>
+    <div class="upd-version">
+      <div class="upd-ver-block">
+        <div class="upd-ver-label">Installée</div>
+        <div class="upd-ver-num old" id="upd-current">—</div>
+      </div>
+      <div class="upd-arrow">→</div>
+      <div class="upd-ver-block">
+        <div class="upd-ver-label">Disponible</div>
+        <div class="upd-ver-num new" id="upd-latest">—</div>
+      </div>
+    </div>
+    <div class="upd-changelog-label">Notes de version</div>
+    <pre class="upd-changelog" id="upd-changelog">Chargement…</pre>
+    <div class="upd-actions">
+      <span class="upd-status" id="upd-status"></span>
+      <button class="btn" id="upd-dismiss-btn" onclick="dismissUpdateModal()">Plus tard</button>
+      <button class="btn btn-primary" id="upd-apply-btn" onclick="applyUpdateFromModal()">Mettre à jour</button>
+    </div>
+  </div>
+</div>
+
+<!-- BARRE DE NAVIGATION MOBILE (visible uniquement sur mobile ≤768px) -->
+<nav class="mobile-nav">
+  <a href="/settings" class="mobile-nav-item">
+    <span class="mobile-nav-icon">⚙️</span>
+    <span>Paramètres</span>
+  </a>
+  <button class="mobile-nav-item" onclick="openReportModal()">
+    <span class="mobile-nav-icon">📄</span>
+    <span>Rapport</span>
+  </button>
+  <button class="mobile-nav-item" id="theme-btn-mobile" onclick="toggleTheme()">
+    <span class="mobile-nav-icon" id="theme-icon-mobile">☀️</span>
+    <span>Thème</span>
+  </button>
+  <a href="/logout" class="mobile-nav-item nav-danger">
+    <span class="mobile-nav-icon">⏻</span>
+    <span>Déco.</span>
+  </a>
+</nav>
 </body>
 </html>

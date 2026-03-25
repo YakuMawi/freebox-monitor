@@ -10,12 +10,13 @@ import secrets
 import threading
 import sys
 import os
+import subprocess
 import logging
 import functools
 from datetime import datetime, timedelta
 
 import requests
-from flask import Flask, jsonify, render_template, request, Response, session, redirect, url_for
+from flask import Flask, jsonify, render_template, request, Response, session, redirect, url_for, g
 from werkzeug.security import generate_password_hash, check_password_hash
 
 import db
@@ -37,21 +38,29 @@ log = logging.getLogger(__name__)
 app = Flask(__name__)
 app.config["SESSION_COOKIE_SECURE"]   = True
 app.config["SESSION_COOKIE_HTTPONLY"] = True
-app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SAMESITE"] = "Strict"
+
+
+@app.before_request
+def _generate_csp_nonce():
+    g.csp_nonce = secrets.token_hex(16)
 
 
 @app.after_request
 def set_security_headers(response):
-    response.headers["X-Content-Type-Options"]  = "nosniff"
-    response.headers["X-Frame-Options"]         = "DENY"
-    response.headers["Referrer-Policy"]         = "strict-origin-when-cross-origin"
+    nonce = getattr(g, "csp_nonce", "")
+    response.headers["X-Content-Type-Options"]    = "nosniff"
+    response.headers["X-Frame-Options"]           = "DENY"
+    response.headers["X-XSS-Protection"]          = "1; mode=block"
+    response.headers["Referrer-Policy"]           = "strict-origin-when-cross-origin"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
-        "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:; "
-        "connect-src 'self'"
+    response.headers["Permissions-Policy"]        = "geolocation=(), microphone=(), camera=()"
+    response.headers["Content-Security-Policy"]   = (
+        f"default-src 'self'; "
+        f"script-src 'self' 'nonce-{nonce}'; "
+        f"style-src 'self' 'nonce-{nonce}'; "
+        f"img-src 'self' data:; "
+        f"connect-src 'self'"
     )
     return response
 
@@ -71,6 +80,23 @@ def login_required(f):
     return decorated
 
 
+def _get_csrf_token() -> str:
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_hex(32)
+    return session["csrf_token"]
+
+
+def csrf_required(f):
+    """Vérifie le token CSRF sur les requêtes d'écriture (POST/PATCH/DELETE)."""
+    @functools.wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get("X-CSRF-Token", "")
+        if not token or not secrets.compare_digest(token, session.get("csrf_token", "")):
+            return jsonify({"error": "CSRF token invalide"}), 403
+        return f(*args, **kwargs)
+    return decorated
+
+
 # ──────────────────────────────────────────────
 # État global (protégé par _lock)
 # ──────────────────────────────────────────────
@@ -86,32 +112,18 @@ _last_ipv4         = "?"
 _last_prune        = 0
 _test_mode_active  = False
 
-# Rate limiting : {ip: [timestamp, ...]}
-_rate_login        = {}
-_rate_forgot       = {}
-_rate_lock         = threading.Lock()
-
 RATE_LOGIN_MAX     = 5    # tentatives
 RATE_LOGIN_WINDOW  = 300  # secondes
 RATE_FORGOT_MAX    = 3
 RATE_FORGOT_WINDOW = 600
+RATE_RESET_MAX     = 5    # tentatives de code OTP
+RATE_RESET_WINDOW  = 900  # 15 min (durée de vie du code)
 
 
 def _get_ip():
     # Never trust X-Forwarded-For unless behind a known reverse proxy.
     # For direct deployment (default), always use the real remote address.
     return request.remote_addr or "127.0.0.1"
-
-
-def _is_rate_limited(store: dict, ip: str, max_attempts: int, window: int) -> bool:
-    now = time.time()
-    with _rate_lock:
-        hits = [t for t in store.get(ip, []) if now - t < window]
-        store[ip] = hits
-        if len(hits) >= max_attempts:
-            return True
-        store[ip].append(now)
-        return False
 
 
 # ──────────────────────────────────────────────
@@ -123,7 +135,10 @@ def load_credentials():
         log.error("credentials.json introuvable — lancez auth.py")
         sys.exit(1)
     with open(CREDENTIALS_FILE) as f:
-        return json.load(f)
+        data = json.load(f)
+    import crypto as _crypto
+    data["app_token"] = _crypto.decrypt(data.get("app_token", ""))
+    return data
 
 
 def api_url(path=""):
@@ -307,7 +322,7 @@ def collect_switch():
                 "link":   port.get("link", "down"),
                 "speed":  port.get("speed", ""),
                 "duplex": port.get("duplex", ""),
-                "rx_bytes": stats.get("rx_bytes", 0),
+                "rx_bytes": stats.get("rx_good_bytes", 0),
                 "tx_bytes": stats.get("tx_bytes", 0),
                 "rx_bytes_rate": stats.get("rx_bytes_rate", 0),
                 "tx_bytes_rate": stats.get("tx_bytes_rate", 0),
@@ -618,6 +633,8 @@ PERIOD_MAP = {
 ALLOWED_CONFIG_KEYS = {
     "smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_from",
     "smtp_tls", "smtp_ssl", "alert_to", "alerts_enabled", "alert_outage_min_s",
+    "webhooks_enabled", "webhook_discord", "webhook_google_chat",
+    "webhook_teams", "webhook_synology", "webhook_generic",
     "github_repo", "github_token", "port",
 }
 
@@ -630,7 +647,7 @@ def forgot_password():
     smtp_ok = bool(cfg.get("smtp_host", "").strip())
     if request.method == "POST":
         ip = _get_ip()
-        if _is_rate_limited(_rate_forgot, ip, RATE_FORGOT_MAX, RATE_FORGOT_WINDOW):
+        if db.is_rate_limited_db(ip, "forgot", RATE_FORGOT_MAX, RATE_FORGOT_WINDOW):
             return render_template("forgot_password.html", smtp_ok=smtp_ok,
                                    error="Trop de tentatives. Réessayez dans 10 minutes.")
         username = request.form.get("username", "").strip()
@@ -677,10 +694,14 @@ def reset_password():
         if new_pw != confirm:
             return render_template("reset_password.html", username=username, no_smtp=no_smtp,
                                    error="Les mots de passe ne correspondent pas.")
-        if len(new_pw) < 4:
+        if len(new_pw) < 8:
             return render_template("reset_password.html", username=username, no_smtp=no_smtp,
-                                   error="Mot de passe trop court (min. 4 caractères).")
+                                   error="Mot de passe trop court (min. 8 caractères).")
         if not no_smtp:
+            ip = _get_ip()
+            if db.is_rate_limited_db(ip, "reset", RATE_RESET_MAX, RATE_RESET_WINDOW):
+                return render_template("reset_password.html", username=username, no_smtp=no_smtp,
+                                       error="Trop de tentatives. Réessayez dans 15 minutes.")
             code = request.form.get("code", "").strip()
             if not code:
                 return render_template("reset_password.html", username=username, no_smtp=no_smtp,
@@ -708,8 +729,8 @@ def setup():
         password = request.form.get("password", "")
         if not username or not password:
             return render_template("setup.html", error="Tous les champs sont requis")
-        if len(password) < 4:
-            return render_template("setup.html", error="Mot de passe trop court (min. 4 caractères)")
+        if len(password) < 8:
+            return render_template("setup.html", error="Mot de passe trop court (min. 8 caractères)")
         db.create_user(username, generate_password_hash(password))
         recovery_email = request.form.get("recovery_email", "").strip()
         if recovery_email:
@@ -725,7 +746,7 @@ def login():
         return redirect(url_for("setup"))
     if request.method == "POST":
         ip = _get_ip()
-        if _is_rate_limited(_rate_login, ip, RATE_LOGIN_MAX, RATE_LOGIN_WINDOW):
+        if db.is_rate_limited_db(ip, "login", RATE_LOGIN_MAX, RATE_LOGIN_WINDOW):
             return render_template("login.html", error="Trop de tentatives. Réessayez dans quelques minutes.")
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
@@ -783,12 +804,19 @@ def route_stats():
 @login_required
 def route_outages():
     limit  = min(int(request.args.get("limit", 50)), 200)
-    offset = int(request.args.get("offset", 0))
+    offset = max(0, int(request.args.get("offset", 0)))
     return jsonify(db.get_outages(limit, offset))
+
+
+@app.route("/api/csrf-token")
+@login_required
+def route_csrf_token():
+    return jsonify({"token": _get_csrf_token()})
 
 
 @app.route("/api/outages/reset-days", methods=["POST"])
 @login_required
+@csrf_required
 def route_reset_outage_days():
     data  = request.get_json(force=True) or {}
     dates = data.get("dates", [])
@@ -800,10 +828,13 @@ def route_reset_outage_days():
 
 @app.route("/api/outages/<int:outage_id>", methods=["PATCH"])
 @login_required
+@csrf_required
 def route_patch_outage(outage_id):
     data    = request.get_json(force=True) or {}
     is_test = int(bool(data["is_test"])) if "is_test" in data else None
     note    = data.get("note")   # None = ne pas modifier la note
+    if note is not None:
+        note = note[:500]        # Limite la longueur (M3)
     db.mark_outage(outage_id, is_test, note)
     return jsonify({"ok": True})
 
@@ -817,6 +848,7 @@ def route_test_mode_get():
 
 @app.route("/api/test-mode", methods=["POST"])
 @login_required
+@csrf_required
 def route_test_mode_set():
     global _test_mode_active
     data = request.get_json(force=True) or {}
@@ -830,8 +862,8 @@ def route_test_mode_set():
 @login_required
 def route_calendar():
     now   = datetime.now()
-    year  = int(request.args.get("year", now.year))
-    month = int(request.args.get("month", now.month))
+    year  = max(2000, min(int(request.args.get("year",  now.year)),  now.year + 1))
+    month = max(1,    min(int(request.args.get("month", now.month)), 12))
     return jsonify(db.get_daily_uptime(year, month))
 
 
@@ -863,6 +895,7 @@ def route_config_get():
 
 @app.route("/api/config", methods=["POST"])
 @login_required
+@csrf_required
 def route_config_post():
     data = request.get_json(force=True) or {}
     for key, value in data.items():
@@ -876,9 +909,21 @@ def route_config_post():
 
 @app.route("/api/config/test-email", methods=["POST"])
 @login_required
+@csrf_required
 def route_test_email():
     cfg = db.get_all_config()
     ok, msg = alert_mod.send_test_email(cfg)
+    return jsonify({"ok": ok, "msg": msg})
+
+
+@app.route("/api/config/test-webhook", methods=["POST"])
+@login_required
+@csrf_required
+def route_test_webhook():
+    data         = request.get_json(force=True) or {}
+    webhook_type = data.get("type", "")
+    cfg          = db.get_all_config()
+    ok, msg      = alert_mod.send_test_webhook(cfg, webhook_type)
     return jsonify({"ok": ok, "msg": msg})
 
 
@@ -886,8 +931,8 @@ def route_test_email():
 @login_required
 def route_report():
     now   = datetime.now()
-    year  = int(request.args.get("year", now.year))
-    month = int(request.args.get("month", now.month))
+    year  = max(2000, min(int(request.args.get("year",  now.year)),  now.year + 1))
+    month = max(1,    min(int(request.args.get("month", now.month)), 12))
     html  = render_monthly_report(year, month)
     return Response(html, mimetype="text/html")
 
@@ -900,6 +945,7 @@ def route_get_recovery_email():
 
 @app.route("/api/auth/recovery-email", methods=["POST"])
 @login_required
+@csrf_required
 def route_set_recovery_email():
     data  = request.get_json(force=True) or {}
     email = data.get("email", "").strip()
@@ -909,6 +955,7 @@ def route_set_recovery_email():
 
 @app.route("/api/auth/change-password", methods=["POST"])
 @login_required
+@csrf_required
 def route_change_password():
     data = request.get_json(force=True) or {}
     current = data.get("current_password", "")
@@ -918,8 +965,8 @@ def route_change_password():
     user = db.get_user(session["user"])
     if not user or not check_password_hash(user["password"], current):
         return jsonify({"ok": False, "msg": "Mot de passe actuel incorrect"}), 403
-    if len(new_pw) < 4:
-        return jsonify({"ok": False, "msg": "Mot de passe trop court (min. 4 caractères)"}), 400
+    if len(new_pw) < 8:
+        return jsonify({"ok": False, "msg": "Mot de passe trop court (min. 8 caractères)"}), 400
     db.update_password(session["user"], generate_password_hash(new_pw))
     return jsonify({"ok": True, "msg": "Mot de passe modifié"})
 
@@ -952,6 +999,7 @@ def route_update_releases():
 
 @app.route("/api/update/apply", methods=["POST"])
 @login_required
+@csrf_required
 def route_update_apply():
     data  = request.get_json(force=True) or {}
     tag   = data.get("tag") or None   # None = dernière version, sinon tag spécifique
@@ -968,7 +1016,7 @@ def route_update_apply():
 def _restart_service():
     """Attempt to restart the systemd service after update."""
     time.sleep(2)
-    os.system("systemctl restart freebox-monitor.service 2>/dev/null || true")
+    subprocess.run(["systemctl", "restart", "freebox-monitor.service"], capture_output=True)
 
 
 # ──────────────────────────────────────────────
@@ -978,6 +1026,14 @@ def _restart_service():
 if __name__ == "__main__":
     load_credentials()
     db.init_db()
+
+    # Migration : re-chiffrement des secrets en clair existants
+    import crypto as _crypto
+    for _key in ("smtp_password", "github_token"):
+        _val = db.get_config(_key)
+        if _val and not _crypto.is_encrypted(_val):
+            db.set_config(_key, _val)
+            log.info("Secret '%s' migré vers stockage chiffré", _key)
 
     # Seed config depuis config.json
     if os.path.exists(CONFIG_FILE):

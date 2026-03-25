@@ -3,9 +3,13 @@ db.py — Couche SQLite pour Freebox Monitor.
 """
 import sqlite3
 import os
+import time
 from datetime import datetime, timedelta
 from calendar import monthrange
 from contextlib import contextmanager
+import crypto
+
+ENCRYPTED_KEYS = {"smtp_password", "github_token"}
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "freebox.db")
 
@@ -73,8 +77,15 @@ def init_db():
                 expires_at INTEGER NOT NULL,
                 used       INTEGER DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS rate_limits (
+                id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                ip      TEXT    NOT NULL,
+                action  TEXT    NOT NULL,
+                ts      INTEGER NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_metrics_ts    ON metrics(ts);
             CREATE INDEX IF NOT EXISTS idx_outages_start ON outages(started_at);
+            CREATE INDEX IF NOT EXISTS idx_rate_limits   ON rate_limits(action, ip, ts);
         """)
         _migrate(c)
 
@@ -281,10 +292,14 @@ def get_outages(limit: int = 50, offset: int = 0) -> list:
 def get_config(key: str, default=None):
     with _conn() as c:
         row = c.execute("SELECT value FROM config WHERE key=?", (key,)).fetchone()
-    return row["value"] if row else default
+    if not row:
+        return default
+    return crypto.decrypt(row["value"]) if row["value"] else default
 
 
 def set_config(key: str, value):
+    if key in ENCRYPTED_KEYS and value and not crypto.is_encrypted(str(value)):
+        value = crypto.encrypt(str(value))
     with _conn() as c:
         c.execute("INSERT OR REPLACE INTO config(key, value) VALUES(?,?)", (key, str(value)))
 
@@ -401,10 +416,37 @@ def seed_config(defaults: dict):
             set_config(key, value)
 
 
+def is_rate_limited_db(ip: str, action: str, max_attempts: int, window_s: int) -> bool:
+    """Vérifie si ip a dépassé max_attempts pour action dans les window_s dernières secondes.
+    Enregistre la tentative si non limitée. Retourne True si limité, False sinon."""
+    now = int(time.time())
+    since = now - window_s
+    with _conn() as c:
+        count = c.execute(
+            "SELECT COUNT(*) FROM rate_limits WHERE ip=? AND action=? AND ts>=?",
+            (ip, action, since)
+        ).fetchone()[0]
+        if count >= max_attempts:
+            return True
+        c.execute(
+            "INSERT INTO rate_limits(ip, action, ts) VALUES(?,?,?)",
+            (ip, action, now)
+        )
+    return False
+
+
+def prune_rate_limits(max_age_s: int = 86400):
+    """Supprime les entrées plus vieilles que max_age_s."""
+    cutoff = int(time.time()) - max_age_s
+    with _conn() as c:
+        c.execute("DELETE FROM rate_limits WHERE ts<?", (cutoff,))
+
+
 def prune_metrics(keep_days: int = 365) -> int:
     cutoff = int((datetime.now() - timedelta(days=keep_days)).timestamp())
     with _conn() as c:
         c.execute("DELETE FROM metrics WHERE ts < ?", (cutoff,))
+        prune_rate_limits()
         return c.execute("SELECT changes()").fetchone()[0]
 
 

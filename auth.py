@@ -6,6 +6,8 @@ import requests
 import json
 import time
 import sys
+import os
+import crypto
 
 FREEBOX_URL = "http://mafreebox.freebox.fr"
 API_VERSION = "v8"
@@ -70,9 +72,10 @@ def authorize():
             print(f"  Statut: {status}...")
             time.sleep(2)
 
-    credentials = {"app_id": APP_ID, "app_token": app_token}
+    data = {"app_id": APP_ID, "app_token": crypto.encrypt(app_token)}
     with open(CREDENTIALS_FILE, "w") as f:
-        json.dump(credentials, f, indent=2)
+        json.dump(data, f, indent=2)
+    os.chmod(CREDENTIALS_FILE, 0o600)
 
     print(f"✓ Credentials sauvegardés dans {CREDENTIALS_FILE}")
     print("\nVous pouvez maintenant lancer : python monitor.py")
