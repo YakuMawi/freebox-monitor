@@ -320,8 +320,8 @@ header{display:flex;align-items:center;justify-content:space-between;
     </div>
     <div class="h-action-btns" style="display:flex;flex-direction:column;gap:6px">
       <a href="/settings" class="btn btn-primary" style="text-decoration:none">⚙ Paramètres</a>
-      <button class="btn" onclick="openReportModal()">📄 Rapport</button>
-      <button class="btn" id="theme-btn" onclick="toggleTheme()">☀️</button>
+      <button class="btn" id="btn-report">📄 Rapport</button>
+      <button class="btn" id="theme-btn">☀️</button>
       <a href="/logout" class="btn" style="text-decoration:none;background:var(--red);color:#fff">⏻ Déconnexion</a>
     </div>
   </div>
@@ -331,15 +331,15 @@ header{display:flex;align-items:center;justify-content:space-between;
 
 <div id="test-mode-banner" class="inactive">
   <span>⚠️ Mode test actif — les coupures détectées seront marquées comme tests et exclues des statistiques</span>
-  <button class="btn btn-test on" style="padding:4px 12px;font-size:12px" onclick="toggleTestMode()">Désactiver</button>
+  <button class="btn btn-test on" id="btn-test-mode-banner" style="padding:4px 12px;font-size:12px">Désactiver</button>
 </div>
 
 <!-- TOOLBAR -->
 <div id="toolbar">
-  <button class="btn" onclick="toggleAllTiles(true)">Tout afficher</button>
-  <button class="btn" onclick="toggleAllTiles(false)">Tout masquer</button>
-  <button class="btn btn-test" id="btn-test-mode" onclick="toggleTestMode()">🧪 Mode test</button>
-  <button class="btn" id="btn-tile-panel" onclick="toggleTilePanel()">
+  <button class="btn" id="btn-tile-show-all">Tout afficher</button>
+  <button class="btn" id="btn-tile-hide-all">Tout masquer</button>
+  <button class="btn btn-test" id="btn-test-mode">🧪 Mode test</button>
+  <button class="btn" id="btn-tile-panel">
     <span id="tile-panel-icon">⊞</span> Tuiles <span id="tile-panel-chevron">▾</span>
   </button>
 </div>
@@ -421,12 +421,12 @@ header{display:flex;align-items:center;justify-content:space-between;
 <div class="tile-section card" id="tile-period" style="margin-bottom:14px">
   <div class="card-title">Statistiques par période</div>
   <div class="tab-bar">
-    <button class="tab-btn active" data-period="24h"  onclick="setPeriod('24h',this)">24 h</button>
-    <button class="tab-btn"        data-period="7j"   onclick="setPeriod('7j',this)">7 jours</button>
-    <button class="tab-btn"        data-period="30j"  onclick="setPeriod('30j',this)">30 jours</button>
-    <button class="tab-btn"        data-period="60j"  onclick="setPeriod('60j',this)">60 jours</button>
-    <button class="tab-btn"        data-period="90j"  onclick="setPeriod('90j',this)">90 jours</button>
-    <button class="tab-btn"        data-period="1an"  onclick="setPeriod('1an',this)">1 an</button>
+    <button class="tab-btn active" data-period="24h">24 h</button>
+    <button class="tab-btn"        data-period="7j">7 jours</button>
+    <button class="tab-btn"        data-period="30j">30 jours</button>
+    <button class="tab-btn"        data-period="60j">60 jours</button>
+    <button class="tab-btn"        data-period="90j">90 jours</button>
+    <button class="tab-btn"        data-period="1an">1 an</button>
   </div>
   <div class="stats-grid" id="period-stats-grid">
     <div class="stat-box"><div class="val" id="ps-uptime">—</div><div class="lbl">Disponibilité</div></div>
@@ -505,9 +505,9 @@ header{display:flex;align-items:center;justify-content:space-between;
 <div class="tile-section card" id="tile-calendar" style="margin-bottom:14px">
   <div class="card-title">Calendrier de disponibilité</div>
   <div id="calendar-nav">
-    <button class="btn" onclick="calNav(-1)">‹</button>
+    <button class="btn" id="btn-cal-prev">‹</button>
     <span id="cal-month-label">—</span>
-    <button class="btn" onclick="calNav(+1)">›</button>
+    <button class="btn" id="btn-cal-next">›</button>
   </div>
   <table class="cal-table" id="cal-table">
     <thead><tr>
@@ -557,10 +557,10 @@ header{display:flex;align-items:center;justify-content:space-between;
     <tbody id="outages-body"></tbody>
   </table>
   <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <button class="btn" id="btn-more-outages" onclick="loadMoreOutages()">Charger plus</button>
+    <button class="btn" id="btn-more-outages">Charger plus</button>
     <span style="font-size:12px;color:var(--muted);margin-left:8px">Marquer un jour comme tests :</span>
     <input type="date" id="reset-day-input" style="padding:5px 10px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;outline:none">
-    <button class="btn btn-test" onclick="resetOutageDay()">Appliquer</button>
+    <button class="btn btn-test" id="btn-reset-day">Appliquer</button>
   </div>
 </div>
 
@@ -588,8 +588,8 @@ header{display:flex;align-items:center;justify-content:space-between;
       </div>
     </div>
     <div style="display:flex;gap:8px;margin-top:8px">
-      <button class="btn btn-primary" onclick="openReport()">Ouvrir le rapport</button>
-      <button class="btn" onclick="document.getElementById('report-modal').classList.remove('open')">Fermer</button>
+      <button class="btn btn-primary" id="btn-open-report">Ouvrir le rapport</button>
+      <button class="btn" id="btn-close-report">Fermer</button>
     </div>
   </div>
 </div>
@@ -1035,10 +1035,10 @@ function updateOutages(rows, append=false){
     const ongoing=!o.ended_at;
     const isTest=o.is_test===1||o.is_test===true;
     const badgeHtml=isTest
-      ?`<span class="badge-test-outage" title="Cliquer pour marquer comme réelle" onclick="toggleOutageType(${o.id},false)">🧪 Test</span>`
-      :`<span class="badge-real" title="Cliquer pour marquer comme test" onclick="toggleOutageType(${o.id},true)">⚠️ Réelle</span>`;
+      ?`<span class="badge-test-outage" title="Cliquer pour marquer comme réelle" data-outage-id="${o.id}" data-outage-toggle="false" style="cursor:pointer">🧪 Test</span>`
+      :`<span class="badge-real" title="Cliquer pour marquer comme test" data-outage-id="${o.id}" data-outage-toggle="true" style="cursor:pointer">⚠️ Réelle</span>`;
     const noteHtml=`<div class="note-cell">
-      <span class="note-text" id="note-text-${o.id}" onclick="editNote(${o.id})" title="Cliquer pour modifier" style="cursor:pointer">${o.note?esc(o.note):'<span style="opacity:.4">—</span>'}</span>
+      <span class="note-text" id="note-text-${o.id}" data-outage-id="${o.id}" data-outage-note="1" title="Cliquer pour modifier" style="cursor:pointer">${o.note?esc(o.note):'<span style="opacity:.4">—</span>'}</span>
     </div>`;
     const causeHtml=ongoing
       ?`<span class="badge br">En cours</span>`
@@ -1296,6 +1296,45 @@ function toggleTilePanel(){
   }
 })();
 
+// ─────────────────────────────────────────
+// Event bindings (CSP: no unsafe-inline)
+// ─────────────────────────────────────────
+(function(){
+  function _bind(id,fn){const el=document.getElementById(id);if(el)el.addEventListener('click',fn);}
+  _bind('btn-report',           ()=>openReportModal());
+  _bind('btn-report-mobile',    ()=>openReportModal());
+  _bind('theme-btn',            ()=>toggleTheme());
+  _bind('theme-btn-mobile',     ()=>toggleTheme());
+  _bind('btn-test-mode-banner', ()=>toggleTestMode());
+  _bind('btn-test-mode',        ()=>toggleTestMode());
+  _bind('btn-tile-show-all',    ()=>toggleAllTiles(true));
+  _bind('btn-tile-hide-all',    ()=>toggleAllTiles(false));
+  _bind('btn-tile-panel',       ()=>toggleTilePanel());
+  _bind('btn-cal-prev',         ()=>calNav(-1));
+  _bind('btn-cal-next',         ()=>calNav(+1));
+  _bind('btn-more-outages',     ()=>loadMoreOutages());
+  _bind('btn-reset-day',        ()=>resetOutageDay());
+  _bind('btn-open-report',      ()=>openReport());
+  _bind('btn-close-report',     ()=>document.getElementById('report-modal').classList.remove('open'));
+  _bind('upd-dismiss-btn',      ()=>dismissUpdateModal());
+  _bind('upd-apply-btn',        ()=>applyUpdateFromModal());
+  // Period tabs
+  const tabBar=document.querySelector('.tab-bar');
+  if(tabBar) tabBar.addEventListener('click',function(e){
+    const btn=e.target.closest('.tab-btn');
+    if(btn) setPeriod(btn.dataset.period,btn);
+  });
+  // Outages table (event delegation for dynamic rows)
+  const outagesTb=document.getElementById('outages-body');
+  if(outagesTb) outagesTb.addEventListener('click',function(e){
+    const el=e.target.closest('[data-outage-id]');
+    if(!el) return;
+    const id=parseInt(el.dataset.outageId);
+    if(el.hasAttribute('data-outage-toggle')) toggleOutageType(id, el.dataset.outageToggle==='true');
+    else if(el.hasAttribute('data-outage-note')) editNote(id);
+  });
+})();
+
 // Thème
 function toggleTheme(){
   const cur=document.documentElement.getAttribute('data-theme')||'dark';
@@ -1344,8 +1383,8 @@ function toggleTheme(){
     <pre class="upd-changelog" id="upd-changelog">Chargement…</pre>
     <div class="upd-actions">
       <span class="upd-status" id="upd-status"></span>
-      <button class="btn" id="upd-dismiss-btn" onclick="dismissUpdateModal()">Plus tard</button>
-      <button class="btn btn-primary" id="upd-apply-btn" onclick="applyUpdateFromModal()">Mettre à jour</button>
+      <button class="btn" id="upd-dismiss-btn">Plus tard</button>
+      <button class="btn btn-primary" id="upd-apply-btn">Mettre à jour</button>
     </div>
   </div>
 </div>
@@ -1356,11 +1395,11 @@ function toggleTheme(){
     <span class="mobile-nav-icon">⚙️</span>
     <span>Paramètres</span>
   </a>
-  <button class="mobile-nav-item" onclick="openReportModal()">
+  <button class="mobile-nav-item" id="btn-report-mobile">
     <span class="mobile-nav-icon">📄</span>
     <span>Rapport</span>
   </button>
-  <button class="mobile-nav-item" id="theme-btn-mobile" onclick="toggleTheme()">
+  <button class="mobile-nav-item" id="theme-btn-mobile">
     <span class="mobile-nav-icon" id="theme-icon-mobile">☀️</span>
     <span>Thème</span>
   </button>
