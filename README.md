@@ -418,6 +418,7 @@ rm -rf /root/freebox-monitor
 
 | Version | Points clés |
 |---|---|
+| **1.1.2** | Audit sécurité complet : rate limiting OTP renforcé, conformité CSP (nonce par requête, suppression des `onclick` inline), cookies `SameSite=Lax`/`Secure`/`HttpOnly`, en-têtes HTTP additionnels, correction installation venv Python 3.12+ (`python3.x-venv` version-spécifique) |
 | **1.1.0** | Chiffrement Fernet des secrets au repos (smtp_password, github_token, app_token Freebox) ; rate limiting persistant en SQLite (résiste aux redémarrages) ; pop-up automatique de mise à jour après connexion avec bouton de mise à jour directe |
 | **1.0.8** | Mode test : différenciation coupures volontaires / pannes réelles, bouton mode test avec bannière, reset compteur par journée, badge et note par coupure dans le journal, statistiques séparées test/réel, calendrier corrigé en thème clair |
 | **1.0.7** | Correction fiabilité des statistiques de coupure : la ré-authentification Freebox est invalidée dès qu'une requête échoue, ce qui permet au monitor de détecter la remontée de la box sans rester bloqué sur un token de session périmé |
@@ -857,6 +858,7 @@ rm -rf /root/freebox-monitor
 
 | Version | Highlights |
 |---|---|
+| **1.1.2** | Full security audit: hardened OTP rate limiting, CSP compliance (per-request nonce, removed inline `onclick`), `SameSite=Lax`/`Secure`/`HttpOnly` cookies, additional HTTP headers, fix venv installation on Python 3.12+ (version-specific `python3.x-venv` package) |
 | **1.1.0** | Fernet encryption of secrets at rest (smtp_password, github_token, Freebox app_token); persistent SQLite rate limiting (survives restarts); automatic update pop-up after login with direct update button |
 | **1.0.8** | Test mode: differentiating planned outages from real failures, test mode button with banner, counter reset by day, badge and note per outage in the log, separate test/real statistics, calendar fix in light theme |
 | **1.0.7** | Fix outage detection reliability: Freebox re-authentication is invalidated as soon as a request fails, allowing the monitor to detect reconnection without getting stuck on a stale session token |

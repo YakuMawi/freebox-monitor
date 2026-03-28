@@ -3,9 +3,10 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg"/>
 <title>Paramètres — Freebox Monitor</title>
-<script>(function(){var t=localStorage.getItem('fbx-theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>
-<style>
+<script nonce="{{ g.csp_nonce }}">(function(){var t=localStorage.getItem('fbx-theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>
+<style nonce="{{ g.csp_nonce }}">
 :root{--bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--text:#e2e8f0;--muted:#718096;
   --blue:#4299e1;--green:#48bb78;--red:#fc8181;--orange:#ed8936}
 [data-theme="light"]{--bg:#f0f4f8;--card:#ffffff;--border:#cbd5e0;--text:#1a202c;--muted:#4a5568;
@@ -73,12 +74,45 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
   align-items:center;justify-content:center;font-size:22px;font-weight:700;color:#fff}
 .user-name{font-size:16px;font-weight:600}
 .user-role{font-size:12px;color:var(--muted)}
+
+/* Email chips */
+.email-chips{display:flex;flex-wrap:wrap;gap:6px;padding:8px 10px;background:var(--bg);
+  border:1px solid var(--border);border-radius:8px;min-height:42px;align-items:center;cursor:text}
+.email-chips:focus-within{border-color:var(--blue)}
+.chip{display:flex;align-items:center;gap:2px;padding:3px 10px 3px 12px;
+  background:rgba(66,153,225,.12);border:1px solid rgba(66,153,225,.35);
+  border-radius:20px;font-size:13px;color:var(--blue)}
+.chip-del{background:none;border:none;color:var(--blue);cursor:pointer;
+  font-size:16px;padding:0 0 0 4px;line-height:1;opacity:.6}
+.chip-del:hover{opacity:1}
+.chip-input{border:none;background:transparent;outline:none;color:var(--text);
+  font-size:14px;min-width:160px;flex:1;padding:2px 0}
+
+/* Webhook rows */
+.wh-row{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.wh-label{width:120px;flex-shrink:0;font-size:13px;font-weight:600;color:var(--text)}
+.wh-input{flex:1;padding:9px 12px;background:var(--bg);border:1px solid var(--border);
+  border-radius:8px;color:var(--text);font-size:13px;outline:none}
+.wh-input:focus{border-color:var(--blue)}
+.wh-badge{font-size:12px;font-weight:600;padding:4px 10px;border-radius:12px;
+  white-space:nowrap;display:none}
+.wh-badge.ok{background:rgba(72,187,120,.15);color:var(--green);display:inline-block}
+.wh-badge.err{background:rgba(252,129,129,.15);color:var(--red);display:inline-block}
 </style>
 </head>
 <body>
 
 <header>
-  <div class="h-logo">📡</div>
+  <div class="h-logo">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="36" height="36">
+      <rect width="40" height="40" rx="8" fill="#1a1a2e"/>
+      <text x="6" y="31" font-family="Arial Black, sans-serif" font-weight="900" font-size="30" fill="#e94560">F</text>
+      <circle cx="33" cy="9" r="2.5" fill="#e94560" opacity="0.4"/>
+      <circle cx="33" cy="17" r="2.5" fill="#e94560" opacity="0.65"/>
+      <circle cx="33" cy="25" r="2.5" fill="#e94560" opacity="0.9"/>
+      <line x1="23" y1="17" x2="29" y2="17" stroke="#e94560" stroke-width="1.2" opacity="0.5"/>
+    </svg>
+  </div>
   <div class="h-title">Paramètres</div>
   <div style="display:flex;align-items:center;gap:12px">
     <button id="theme-btn" onclick="toggleTheme()" style="background:none;border:1px solid var(--border);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:16px;color:var(--text)">☀️</button>
@@ -88,6 +122,7 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
 
 <div class="tabs">
   <button class="tab-btn active" onclick="switchTab('smtp')">Alertes SMTP</button>
+  <button class="tab-btn" onclick="switchTab('webhooks')">Webhooks</button>
   <button class="tab-btn" onclick="switchTab('update')">Mise à jour</button>
   <button class="tab-btn" onclick="switchTab('account')">Compte</button>
 </div>
@@ -124,8 +159,12 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
         <input type="email" id="smtp_from" placeholder="freebox@moi.fr">
       </div>
       <div class="form-group">
-        <label>Destinataire (To)</label>
-        <input type="email" id="alert_to" placeholder="moi@gmail.com">
+        <label>Destinataires (To)</label>
+        <div class="email-chips" id="email-chips-container" onclick="document.getElementById('email-chip-input').focus()">
+          <input type="text" id="email-chip-input" class="chip-input" placeholder="email@exemple.fr"
+                 onkeydown="handleChipKeydown(event)" onblur="addChipFromInput()">
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">Entrée ou virgule pour ajouter · Retour arrière pour supprimer</div>
       </div>
     </div>
     <div style="margin-bottom:14px">
@@ -150,6 +189,57 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
       <button class="btn btn-outline" onclick="testSmtp()">Tester l'envoi</button>
     </div>
     <div class="alert" id="smtp-result"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     ONGLET WEBHOOKS
+═══════════════════════════════════════ -->
+<div class="tab-content" id="tab-webhooks">
+  <div class="card">
+    <div class="card-title">Notifications Webhook</div>
+    <div style="margin-bottom:16px">
+      <label class="form-check">
+        <input type="checkbox" id="webhooks_enabled"> Activer les webhooks
+      </label>
+    </div>
+
+    <div class="wh-row">
+      <div class="wh-label">Discord</div>
+      <input type="url" class="wh-input" id="webhook_discord" placeholder="https://discord.com/api/webhooks/…">
+      <button class="btn btn-outline" style="padding:8px 14px;font-size:12px" onclick="testWebhook('discord')">Tester</button>
+      <span class="wh-badge" id="wh-badge-discord"></span>
+    </div>
+    <div class="wh-row">
+      <div class="wh-label">Google Chat</div>
+      <input type="url" class="wh-input" id="webhook_google_chat" placeholder="https://chat.googleapis.com/v1/spaces/…">
+      <button class="btn btn-outline" style="padding:8px 14px;font-size:12px" onclick="testWebhook('google_chat')">Tester</button>
+      <span class="wh-badge" id="wh-badge-google_chat"></span>
+    </div>
+    <div class="wh-row">
+      <div class="wh-label">Microsoft Teams</div>
+      <input type="url" class="wh-input" id="webhook_teams" placeholder="https://…webhook.office.com/webhookb2/…">
+      <button class="btn btn-outline" style="padding:8px 14px;font-size:12px" onclick="testWebhook('teams')">Tester</button>
+      <span class="wh-badge" id="wh-badge-teams"></span>
+    </div>
+    <div class="wh-row">
+      <div class="wh-label">Synology Chat</div>
+      <input type="url" class="wh-input" id="webhook_synology" placeholder="https://nas/webapi/entry.cgi?api=SYNO.Chat.External&…">
+      <button class="btn btn-outline" style="padding:8px 14px;font-size:12px" onclick="testWebhook('synology')">Tester</button>
+      <span class="wh-badge" id="wh-badge-synology"></span>
+    </div>
+    <div class="wh-row">
+      <div class="wh-label">Générique (JSON)</div>
+      <input type="url" class="wh-input" id="webhook_generic" placeholder="https://mon-serveur/webhook">
+      <button class="btn btn-outline" style="padding:8px 14px;font-size:12px" onclick="testWebhook('generic')">Tester</button>
+      <span class="wh-badge" id="wh-badge-generic"></span>
+    </div>
+
+    <div style="margin-top:8px;font-size:12px;color:var(--muted);margin-bottom:16px">
+      Le webhook générique reçoit un POST JSON avec les champs : <code>event</code>, <code>title</code>, <code>message</code>, <code>timestamp</code>.
+    </div>
+    <button class="btn btn-primary" onclick="saveWebhooks()">Enregistrer</button>
+    <div class="alert" id="webhooks-result"></div>
   </div>
 </div>
 
@@ -257,20 +347,21 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
   </div>
 </div>
 
-<script>
+<script nonce="{{ g.csp_nonce }}">
 // ─────────────────────────────────────
 // Tab switching
 // ─────────────────────────────────────
 function switchTab(name){
   document.querySelectorAll('.tab-btn').forEach((b,i)=>{
-    const tabs=['smtp','update','account'];
+    const tabs=['smtp','webhooks','update','account'];
     b.classList.toggle('active', tabs[i]===name);
   });
   document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
   document.getElementById('tab-'+name).classList.add('active');
-  if(name==='update') loadVersion();
-  if(name==='smtp') loadSmtpConfig();
-  if(name==='account') loadAccount();
+  if(name==='update')   loadVersion();
+  if(name==='smtp')     loadSmtpConfig();
+  if(name==='webhooks') loadWebhooksConfig();
+  if(name==='account')  loadAccount();
 }
 
 function showAlert(id, msg, type){
@@ -281,12 +372,62 @@ function showAlert(id, msg, type){
 }
 
 // ─────────────────────────────────────
+// Email chips
+// ─────────────────────────────────────
+let _emailList = [];
+
+function renderChips(){
+  const container = document.getElementById('email-chips-container');
+  container.querySelectorAll('.chip').forEach(c => c.remove());
+  const input = document.getElementById('email-chip-input');
+  _emailList.forEach((email, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    const emailNode = document.createTextNode(email);
+    const btn = document.createElement('button');
+    btn.className = 'chip-del';
+    btn.type = 'button';
+    btn.textContent = '×';
+    btn.setAttribute('onclick', `removeChip(${i})`);
+    chip.appendChild(emailNode);
+    chip.appendChild(btn);
+    container.insertBefore(chip, input);
+  });
+}
+
+function addChip(raw){
+  const email = raw.trim().toLowerCase();
+  if(!email || !email.includes('@')) return;
+  if(!_emailList.includes(email)) { _emailList.push(email); renderChips(); }
+  document.getElementById('email-chip-input').value='';
+}
+
+function addChipFromInput(){
+  addChip(document.getElementById('email-chip-input').value);
+}
+
+function removeChip(i){
+  _emailList.splice(i,1);
+  renderChips();
+}
+
+function handleChipKeydown(e){
+  if(e.key==='Enter'||e.key===','){
+    e.preventDefault();
+    addChip(e.target.value);
+  } else if(e.key==='Backspace' && e.target.value==='' && _emailList.length>0){
+    _emailList.pop();
+    renderChips();
+  }
+}
+
+// ─────────────────────────────────────
 // SMTP
 // ─────────────────────────────────────
 async function loadSmtpConfig(){
   const r=await fetch('/api/config');
   const cfg=await r.json();
-  ['smtp_host','smtp_port','smtp_user','smtp_from','alert_to','alert_outage_min_s'].forEach(k=>{
+  ['smtp_host','smtp_port','smtp_user','smtp_from','alert_outage_min_s'].forEach(k=>{
     const el=document.getElementById(k);
     if(el) el.value=cfg[k]||'';
   });
@@ -294,27 +435,77 @@ async function loadSmtpConfig(){
   document.getElementById('smtp_tls').checked=(cfg.smtp_tls!=='false');
   document.getElementById('smtp_ssl').checked=(cfg.smtp_ssl==='true');
   document.getElementById('alerts_enabled').checked=(cfg.alerts_enabled==='true');
+  // Charger les destinataires en chips
+  _emailList=(cfg.alert_to||'').split(',').map(e=>e.trim()).filter(Boolean);
+  renderChips();
 }
 
 async function saveSmtp(){
   const data={};
-  ['smtp_host','smtp_port','smtp_user','smtp_from','alert_to','alert_outage_min_s'].forEach(k=>{
+  ['smtp_host','smtp_port','smtp_user','smtp_from','alert_outage_min_s'].forEach(k=>{
     data[k]=document.getElementById(k).value;
   });
+  addChipFromInput();
+  data.alert_to=_emailList.join(',');
   const pw=document.getElementById('smtp_password').value;
   if(pw) data.smtp_password=pw;
   data.smtp_tls=document.getElementById('smtp_tls').checked?'true':'false';
   data.smtp_ssl=document.getElementById('smtp_ssl').checked?'true':'false';
   data.alerts_enabled=document.getElementById('alerts_enabled').checked?'true':'false';
-  await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+  await fetch('/api/config',{method:'POST',headers:_ch({'Content-Type':'application/json'}),body:JSON.stringify(data)});
   showAlert('smtp-result','Configuration enregistrée','ok');
 }
 
 async function testSmtp(){
   showAlert('smtp-result','Envoi en cours...','info');
-  const r=await fetch('/api/config/test-email',{method:'POST'});
+  const r=await fetch('/api/config/test-email',{method:'POST',headers:_ch({})});
   const data=await r.json();
   showAlert('smtp-result', data.ok?'Email envoyé avec succès':'Erreur: '+data.msg, data.ok?'ok':'err');
+}
+
+// ─────────────────────────────────────
+// Webhooks
+// ─────────────────────────────────────
+async function loadWebhooksConfig(){
+  const r=await fetch('/api/config');
+  const cfg=await r.json();
+  ['webhook_discord','webhook_google_chat','webhook_teams','webhook_synology','webhook_generic'].forEach(k=>{
+    const el=document.getElementById(k);
+    if(el) el.value=cfg[k]||'';
+  });
+  document.getElementById('webhooks_enabled').checked=(cfg.webhooks_enabled==='true');
+}
+
+async function saveWebhooks(){
+  const data={};
+  ['webhook_discord','webhook_google_chat','webhook_teams','webhook_synology','webhook_generic'].forEach(k=>{
+    data[k]=document.getElementById(k).value;
+  });
+  data.webhooks_enabled=document.getElementById('webhooks_enabled').checked?'true':'false';
+  await fetch('/api/config',{method:'POST',headers:_ch({'Content-Type':'application/json'}),body:JSON.stringify(data)});
+  showAlert('webhooks-result','Configuration enregistrée','ok');
+}
+
+async function testWebhook(type){
+  // Sauvegarder l'URL avant de tester
+  const urlEl=document.getElementById('webhook_'+type);
+  if(urlEl){
+    const save={};
+    save['webhook_'+type]=urlEl.value;
+    await fetch('/api/config',{method:'POST',headers:_ch({'Content-Type':'application/json'}),body:JSON.stringify(save)});
+  }
+  const badge=document.getElementById('wh-badge-'+type);
+  badge.className='wh-badge';
+  badge.textContent='…';
+  badge.style.display='inline-block';
+  const r=await fetch('/api/config/test-webhook',{
+    method:'POST',headers:_ch({'Content-Type':'application/json'}),
+    body:JSON.stringify({type})
+  });
+  const data=await r.json();
+  badge.className='wh-badge '+(data.ok?'ok':'err');
+  badge.textContent=data.ok?'OK':'Erreur';
+  badge.title=data.msg||'';
 }
 
 // ─────────────────────────────────────
@@ -336,7 +527,7 @@ async function saveUpdateConfig(){
   const data={github_repo: document.getElementById('github_repo').value};
   const token=document.getElementById('github_token').value;
   if(token) data.github_token=token;
-  await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+  await fetch('/api/config',{method:'POST',headers:_ch({'Content-Type':'application/json'}),body:JSON.stringify(data)});
   showAlert('update-alert','Configuration enregistrée','ok');
 }
 
@@ -374,7 +565,7 @@ async function applyUpdate(){
   const prevVer=document.getElementById('current-version').textContent;
   const body=_latestTag ? {tag:_latestTag} : {};
   try{
-    const r=await fetch('/api/update/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const r=await fetch('/api/update/apply',{method:'POST',headers:_ch({'Content-Type':'application/json'}),body:JSON.stringify(body)});
     const data=await r.json();
     if(!data.ok){ showAlert('update-alert','Erreur: '+data.msg,'err'); return; }
     showAlert('update-alert','Mise à jour appliquée. Redémarrage en cours...','ok');
@@ -418,7 +609,7 @@ async function applyDowngrade(){
   showAlert('downgrade-alert','Installation en cours...','info');
   const prevVer=document.getElementById('current-version').textContent;
   try{
-    const r=await fetch('/api/update/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tag})});
+    const r=await fetch('/api/update/apply',{method:'POST',headers:_ch({'Content-Type':'application/json'}),body:JSON.stringify({tag})});
     const data=await r.json();
     if(!data.ok){ showAlert('downgrade-alert','Erreur: '+data.msg,'err'); return; }
     showAlert('downgrade-alert','Version installée. Redémarrage en cours...','ok');
@@ -459,7 +650,7 @@ async function loadAccount(){
 async function saveRecoveryEmail(){
   const email=document.getElementById('recovery-email').value.trim();
   const r=await fetch('/api/auth/recovery-email',{
-    method:'POST',headers:{'Content-Type':'application/json'},
+    method:'POST',headers:_ch({'Content-Type':'application/json'}),
     body:JSON.stringify({email})
   });
   const data=await r.json();
@@ -479,7 +670,7 @@ async function changePassword(){
     return;
   }
   const r=await fetch('/api/auth/change-password',{
-    method:'POST',headers:{'Content-Type':'application/json'},
+    method:'POST',headers:_ch({'Content-Type':'application/json'}),
     body:JSON.stringify({current_password:current, new_password:newPw})
   });
   const data=await r.json();
@@ -509,8 +700,14 @@ function _initThemeBtn(){
 // ─────────────────────────────────────
 // Init
 // ─────────────────────────────────────
+let _csrfToken='';
+async function initCsrf(){
+  try{ const r=await fetch('/api/csrf-token'); const d=await r.json(); _csrfToken=d.token||''; }catch(e){}
+}
+function _ch(extra){ return Object.assign({},extra,{'X-CSRF-Token':_csrfToken}); }
+
 _initThemeBtn();
-loadSmtpConfig();
+initCsrf().then(()=>loadSmtpConfig());
 </script>
 </body>
 </html>

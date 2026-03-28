@@ -52,11 +52,14 @@ header{display:flex;align-items:center;justify-content:space-between;
 .btn-danger{background:rgba(252,129,129,.15);border-color:var(--red);color:var(--red)}
 
 /* Tiles */
-.grid{display:grid;gap:14px}
+.grid{display:grid;row-gap:14px;column-gap:14px}
 .g2{grid-template-columns:repeat(2,1fr)}
 .g3{grid-template-columns:repeat(3,1fr)}
 .g4{grid-template-columns:repeat(4,1fr)}
 .g6{grid-template-columns:repeat(6,1fr)}
+
+/* Espacement vertical entre sections de tuiles */
+.tile-section{margin-bottom:14px;transition:opacity .3s}
 
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px}
 .card-title{font-size:11px;font-weight:600;text-transform:uppercase;
@@ -163,7 +166,6 @@ header{display:flex;align-items:center;justify-content:space-between;
 #btn-tile-panel{display:none}
 
 /* Hidden tile */
-.tile-section{transition:opacity .3s}
 .tile-section.hidden{display:none}
 
 /* Error banner */
@@ -352,7 +354,7 @@ header{display:flex;align-items:center;justify-content:space-between;
 <!-- ═══════════════════════════════════════════
      KPI TILES
 ═══════════════════════════════════════════ -->
-<div class="tile-section grid g6" id="tile-kpi" style="margin-bottom:14px">
+<div class="tile-section grid g6" id="tile-kpi">
 
   <div class="card metric-card">
     <div class="metric-icon">⬇️</div>
@@ -404,7 +406,7 @@ header{display:flex;align-items:center;justify-content:space-between;
 <!-- ═══════════════════════════════════════════
      CHARTS
 ═══════════════════════════════════════════ -->
-<div class="tile-section grid g2" id="tile-charts" style="margin-bottom:14px">
+<div class="tile-section grid g2" id="tile-charts">
   <div class="card">
     <div class="card-title">Débit temps réel (Mbit/s)</div>
     <div class="chart-wrap"><canvas id="chart-bw"></canvas></div>
@@ -418,7 +420,7 @@ header{display:flex;align-items:center;justify-content:space-between;
 <!-- ═══════════════════════════════════════════
      STATS PAR PÉRIODE
 ═══════════════════════════════════════════ -->
-<div class="tile-section card" id="tile-period" style="margin-bottom:14px">
+<div class="tile-section card" id="tile-period">
   <div class="card-title">Statistiques par période</div>
   <div class="tab-bar">
     <button class="tab-btn active" data-period="24h">24 h</button>
@@ -444,7 +446,7 @@ header{display:flex;align-items:center;justify-content:space-between;
 <!-- ═══════════════════════════════════════════
      INFO CARDS
 ═══════════════════════════════════════════ -->
-<div class="tile-section grid g3" id="tile-infos" style="margin-bottom:14px">
+<div class="tile-section grid g3" id="tile-infos">
 
   <div class="card">
     <div class="card-title">Système</div>
@@ -485,7 +487,7 @@ header{display:flex;align-items:center;justify-content:space-between;
 <!-- ═══════════════════════════════════════════
      TEMPÉRATURES + VENTILATEURS
 ═══════════════════════════════════════════ -->
-<div class="tile-section grid g2" id="tile-hw" style="margin-bottom:14px">
+<div class="tile-section grid g2" id="tile-hw">
 
   <div class="card">
     <div class="card-title">Capteurs de température</div>
@@ -502,7 +504,7 @@ header{display:flex;align-items:center;justify-content:space-between;
 <!-- ═══════════════════════════════════════════
      CALENDRIER
 ═══════════════════════════════════════════ -->
-<div class="tile-section card" id="tile-calendar" style="margin-bottom:14px">
+<div class="tile-section card" id="tile-calendar">
   <div class="card-title">Calendrier de disponibilité</div>
   <div id="calendar-nav">
     <button class="btn" id="btn-cal-prev">‹</button>
@@ -529,7 +531,7 @@ header{display:flex;align-items:center;justify-content:space-between;
 <!-- ═══════════════════════════════════════════
      SWITCH PORTS
 ═══════════════════════════════════════════ -->
-<div class="tile-section card" id="tile-switch" style="margin-bottom:14px">
+<div class="tile-section card" id="tile-switch">
   <div class="card-title">Ports Switch</div>
   <table class="data-table">
     <thead><tr>
@@ -542,7 +544,7 @@ header{display:flex;align-items:center;justify-content:space-between;
 <!-- ═══════════════════════════════════════════
      STOCKAGE
 ═══════════════════════════════════════════ -->
-<div class="tile-section card" id="tile-storage" style="margin-bottom:14px">
+<div class="tile-section card" id="tile-storage">
   <div class="card-title">Stockage</div>
   <div id="storage-content"></div>
 </div>
@@ -550,7 +552,7 @@ header{display:flex;align-items:center;justify-content:space-between;
 <!-- ═══════════════════════════════════════════
      JOURNAL DES COUPURES
 ═══════════════════════════════════════════ -->
-<div class="tile-section card" id="tile-outages" style="margin-bottom:14px">
+<div class="tile-section card" id="tile-outages">
   <div class="card-title">Journal des coupures</div>
   <table class="data-table">
     <thead><tr><th>Début</th><th>Fin</th><th>Durée</th><th>Type</th><th>Cause / Note</th></tr></thead>

@@ -25,9 +25,13 @@ echo ""
 
 # 1. Installer les dépendances système manquantes
 PKGS=()
-command -v python3   &>/dev/null || PKGS+=(python3)
-command -v openssl   &>/dev/null || PKGS+=(openssl)
-python3 -m venv --help &>/dev/null 2>&1 || PKGS+=(python3-venv)
+command -v python3 &>/dev/null || PKGS+=(python3)
+command -v openssl &>/dev/null || PKGS+=(openssl)
+
+# Détection de la version Python avant le check venv
+PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "3")
+# Vérifie que ensurepip est disponible (requis pour créer un venv fonctionnel)
+python3 -c "import ensurepip" &>/dev/null 2>&1 || PKGS+=("python${PYTHON_VERSION}-venv")
 
 if [ ${#PKGS[@]} -gt 0 ]; then
     if ! command -v apt-get &>/dev/null; then
@@ -39,9 +43,10 @@ if [ ${#PKGS[@]} -gt 0 ]; then
     apt-get install -y -qq "${PKGS[@]}"
     echo "✓ Dépendances système installées"
     echo ""
+    # Re-détecte la version après installation éventuelle de python3
+    PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
 fi
 
-PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
 echo "✓ Python $PYTHON_VERSION détecté"
 
 # 2. Créer le venv

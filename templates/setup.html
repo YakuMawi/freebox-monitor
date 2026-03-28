@@ -3,9 +3,10 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg"/>
 <title>Configuration initiale — Freebox Monitor</title>
-<script>(function(){var t=localStorage.getItem('fbx-theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>
-<style>
+<script nonce="{{ g.csp_nonce }}">(function(){var t=localStorage.getItem('fbx-theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>
+<style nonce="{{ g.csp_nonce }}">
 :root{--bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--text:#e2e8f0;--muted:#718096;--blue:#4299e1;--red:#fc8181;--green:#48bb78}
 [data-theme="light"]{--bg:#f0f4f8;--card:#ffffff;--border:#cbd5e0;--text:#1a202c;--muted:#4a5568;--blue:#3182ce;--red:#c53030;--green:#276749}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -57,7 +58,7 @@ h1{font-size:22px;font-weight:700;margin-bottom:4px}
     <button type="submit" class="btn">Créer le compte</button>
   </form>
 </div>
-<script>
+<script nonce="{{ g.csp_nonce }}">
 document.getElementById('setup-form').addEventListener('submit', function(e){
   const pw1=document.getElementById('pw1').value;
   const pw2=document.getElementById('pw2').value;

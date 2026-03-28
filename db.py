@@ -4,12 +4,18 @@ db.py — Couche SQLite pour Freebox Monitor.
 import sqlite3
 import os
 import time
+import threading
 from datetime import datetime, timedelta
 from calendar import monthrange
 from contextlib import contextmanager
 import crypto
 
 ENCRYPTED_KEYS = {"smtp_password", "github_token"}
+
+# Sérialise tous les accès DB entre threads.
+# RLock (réentrant) : un même thread peut ouvrir plusieurs _conn() imbriqués
+# (ex: prune_metrics → prune_rate_limits) sans deadlock.
+_db_lock = threading.RLock()
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "freebox.db")
 
@@ -28,6 +34,12 @@ def _migrate(c):
 
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    # WAL mode : lectures et écriture peuvent se faire simultanément.
+    # Doit être activé hors transaction, via une connexion dédiée.
+    _wal = sqlite3.connect(DB_PATH)
+    _wal.execute("PRAGMA journal_mode=WAL")
+    _wal.execute("PRAGMA synchronous=NORMAL")
+    _wal.close()
     with _conn() as c:
         c.executescript("""
             CREATE TABLE IF NOT EXISTS metrics (
@@ -92,13 +104,14 @@ def init_db():
 
 @contextmanager
 def _conn():
-    c = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c.row_factory = sqlite3.Row
-    try:
-        yield c
-        c.commit()
-    finally:
-        c.close()
+    with _db_lock:
+        c = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=5)
+        c.row_factory = sqlite3.Row
+        try:
+            yield c
+            c.commit()
+        finally:
+            c.close()
 
 
 def insert_metric(data: dict):
@@ -444,9 +457,10 @@ def prune_rate_limits(max_age_s: int = 86400):
 
 def prune_metrics(keep_days: int = 365) -> int:
     cutoff = int((datetime.now() - timedelta(days=keep_days)).timestamp())
+    rate_cutoff = int(time.time()) - 86400
     with _conn() as c:
         c.execute("DELETE FROM metrics WHERE ts < ?", (cutoff,))
-        prune_rate_limits()
+        c.execute("DELETE FROM rate_limits WHERE ts < ?", (rate_cutoff,))
         return c.execute("SELECT changes()").fetchone()[0]
 
 

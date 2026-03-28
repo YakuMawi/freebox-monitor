@@ -10,5 +10,11 @@
   "smtp_tls": "true",
   "smtp_ssl": "false",
   "alerts_enabled": "false",
-  "alert_outage_min_s": "30"
+  "alert_outage_min_s": "30",
+  "webhooks_enabled": "false",
+  "webhook_discord": "",
+  "webhook_google_chat": "",
+  "webhook_teams": "",
+  "webhook_synology": "",
+  "webhook_generic": ""
 }
