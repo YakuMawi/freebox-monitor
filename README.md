@@ -442,6 +442,7 @@ Le script effectue dans l'ordre :
 
 | Version | Points clés |
 |---|---|
+| **1.1.4** | Correction rapport mensuel — CSS bloqué par CSP (ajout nonce sur `<style>` et `<script>`), mauvais logo remplacé par le SVG Freebox, `print-color-adjust:exact` pour les couleurs du calendrier à l'impression, bouton Imprimer migré vers `addEventListener` |
 | **1.1.3** | Correction onglets Paramètres (Webhooks, Mise à jour, Compte) inaccessibles — conformité CSP étendue à `settings.html` (migration `onclick` inline → `addEventListener`) ; ajout du script de désinstallation guidé `uninstall.sh` |
 | **1.1.2** | Audit sécurité complet : rate limiting OTP renforcé, conformité CSP (nonce par requête, suppression des `onclick` inline), cookies `SameSite=Lax`/`Secure`/`HttpOnly`, en-têtes HTTP additionnels, correction installation venv Python 3.12+ (`python3.x-venv` version-spécifique) |
 | **1.1.0** | Chiffrement Fernet des secrets au repos (smtp_password, github_token, app_token Freebox) ; rate limiting persistant en SQLite (résiste aux redémarrages) ; pop-up automatique de mise à jour après connexion avec bouton de mise à jour directe |
@@ -907,6 +908,7 @@ The script performs in order:
 
 | Version | Highlights |
 |---|---|
+| **1.1.4** | Fix monthly report — CSS blocked by CSP (added nonce on `<style>` and `<script>`), wrong logo replaced with Freebox SVG, `print-color-adjust:exact` for calendar colors when printing, print button migrated to `addEventListener` |
 | **1.1.3** | Fix Settings tabs (Webhooks, Update, Account) being inaccessible — CSP compliance extended to `settings.html` (migrated inline `onclick` → `addEventListener`); added guided uninstall script `uninstall.sh` |
 | **1.1.2** | Full security audit: hardened OTP rate limiting, CSP compliance (per-request nonce, removed inline `onclick`), `SameSite=Lax`/`Secure`/`HttpOnly` cookies, additional HTTP headers, fix venv installation on Python 3.12+ (version-specific `python3.x-venv` package) |
 | **1.1.0** | Fernet encryption of secrets at rest (smtp_password, github_token, Freebox app_token); persistent SQLite rate limiting (survives restarts); automatic update pop-up after login with direct update button |
