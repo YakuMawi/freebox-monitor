@@ -115,16 +115,16 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
   </div>
   <div class="h-title">Paramètres</div>
   <div style="display:flex;align-items:center;gap:12px">
-    <button id="theme-btn" onclick="toggleTheme()" style="background:none;border:1px solid var(--border);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:16px;color:var(--text)">☀️</button>
+    <button id="theme-btn" style="background:none;border:1px solid var(--border);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:16px;color:var(--text)">☀️</button>
     <a href="/" class="h-back">← Retour au dashboard</a>
   </div>
 </header>
 
 <div class="tabs">
-  <button class="tab-btn active" onclick="switchTab('smtp')">Alertes SMTP</button>
-  <button class="tab-btn" onclick="switchTab('webhooks')">Webhooks</button>
-  <button class="tab-btn" onclick="switchTab('update')">Mise à jour</button>
-  <button class="tab-btn" onclick="switchTab('account')">Compte</button>
+  <button class="tab-btn active" id="tab-btn-smtp">Alertes SMTP</button>
+  <button class="tab-btn" id="tab-btn-webhooks">Webhooks</button>
+  <button class="tab-btn" id="tab-btn-update">Mise à jour</button>
+  <button class="tab-btn" id="tab-btn-account">Compte</button>
 </div>
 
 <!-- ═══════════════════════════════════════
@@ -160,9 +160,8 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
       </div>
       <div class="form-group">
         <label>Destinataires (To)</label>
-        <div class="email-chips" id="email-chips-container" onclick="document.getElementById('email-chip-input').focus()">
-          <input type="text" id="email-chip-input" class="chip-input" placeholder="email@exemple.fr"
-                 onkeydown="handleChipKeydown(event)" onblur="addChipFromInput()">
+        <div class="email-chips" id="email-chips-container">
+          <input type="text" id="email-chip-input" class="chip-input" placeholder="email@exemple.fr">
         </div>
         <div style="font-size:11px;color:var(--muted);margin-top:4px">Entrée ou virgule pour ajouter · Retour arrière pour supprimer</div>
       </div>
@@ -185,8 +184,8 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
       </div>
     </div>
     <div style="display:flex;gap:8px">
-      <button class="btn btn-primary" onclick="saveSmtp()">Enregistrer</button>
-      <button class="btn btn-outline" onclick="testSmtp()">Tester l'envoi</button>
+      <button class="btn btn-primary" id="btn-smtp-save">Enregistrer</button>
+      <button class="btn btn-outline" id="btn-smtp-test">Tester l'envoi</button>
     </div>
     <div class="alert" id="smtp-result"></div>
   </div>
@@ -207,38 +206,38 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
     <div class="wh-row">
       <div class="wh-label">Discord</div>
       <input type="url" class="wh-input" id="webhook_discord" placeholder="https://discord.com/api/webhooks/…">
-      <button class="btn btn-outline" style="padding:8px 14px;font-size:12px" onclick="testWebhook('discord')">Tester</button>
+      <button class="btn btn-outline" id="btn-wh-test-discord" style="padding:8px 14px;font-size:12px">Tester</button>
       <span class="wh-badge" id="wh-badge-discord"></span>
     </div>
     <div class="wh-row">
       <div class="wh-label">Google Chat</div>
       <input type="url" class="wh-input" id="webhook_google_chat" placeholder="https://chat.googleapis.com/v1/spaces/…">
-      <button class="btn btn-outline" style="padding:8px 14px;font-size:12px" onclick="testWebhook('google_chat')">Tester</button>
+      <button class="btn btn-outline" id="btn-wh-test-google_chat" style="padding:8px 14px;font-size:12px">Tester</button>
       <span class="wh-badge" id="wh-badge-google_chat"></span>
     </div>
     <div class="wh-row">
       <div class="wh-label">Microsoft Teams</div>
       <input type="url" class="wh-input" id="webhook_teams" placeholder="https://…webhook.office.com/webhookb2/…">
-      <button class="btn btn-outline" style="padding:8px 14px;font-size:12px" onclick="testWebhook('teams')">Tester</button>
+      <button class="btn btn-outline" id="btn-wh-test-teams" style="padding:8px 14px;font-size:12px">Tester</button>
       <span class="wh-badge" id="wh-badge-teams"></span>
     </div>
     <div class="wh-row">
       <div class="wh-label">Synology Chat</div>
       <input type="url" class="wh-input" id="webhook_synology" placeholder="https://nas/webapi/entry.cgi?api=SYNO.Chat.External&…">
-      <button class="btn btn-outline" style="padding:8px 14px;font-size:12px" onclick="testWebhook('synology')">Tester</button>
+      <button class="btn btn-outline" id="btn-wh-test-synology" style="padding:8px 14px;font-size:12px">Tester</button>
       <span class="wh-badge" id="wh-badge-synology"></span>
     </div>
     <div class="wh-row">
       <div class="wh-label">Générique (JSON)</div>
       <input type="url" class="wh-input" id="webhook_generic" placeholder="https://mon-serveur/webhook">
-      <button class="btn btn-outline" style="padding:8px 14px;font-size:12px" onclick="testWebhook('generic')">Tester</button>
+      <button class="btn btn-outline" id="btn-wh-test-generic" style="padding:8px 14px;font-size:12px">Tester</button>
       <span class="wh-badge" id="wh-badge-generic"></span>
     </div>
 
     <div style="margin-top:8px;font-size:12px;color:var(--muted);margin-bottom:16px">
       Le webhook générique reçoit un POST JSON avec les champs : <code>event</code>, <code>title</code>, <code>message</code>, <code>timestamp</code>.
     </div>
-    <button class="btn btn-primary" onclick="saveWebhooks()">Enregistrer</button>
+    <button class="btn btn-primary" id="btn-wh-save">Enregistrer</button>
     <div class="alert" id="webhooks-result"></div>
   </div>
 </div>
@@ -266,8 +265,8 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
       </div>
     </div>
     <div style="display:flex;gap:8px">
-      <button class="btn btn-primary" onclick="saveUpdateConfig()">Enregistrer</button>
-      <button class="btn btn-outline" onclick="checkUpdate()">Vérifier les mises à jour</button>
+      <button class="btn btn-primary" id="btn-update-save">Enregistrer</button>
+      <button class="btn btn-outline" id="btn-update-check">Vérifier les mises à jour</button>
     </div>
     <div class="update-result" id="update-result">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
@@ -275,7 +274,7 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
           <span style="font-size:13px;color:var(--muted)">Dernière version :</span>
           <strong id="latest-version" style="color:var(--green);margin-left:6px"></strong>
         </div>
-        <button class="btn btn-green" id="btn-apply-update" onclick="applyUpdate()" style="display:none">
+        <button class="btn btn-green" id="btn-apply-update" style="display:none">
           Mettre à jour
         </button>
       </div>
@@ -293,8 +292,8 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
       </select>
     </div>
     <div style="display:flex;gap:8px">
-      <button class="btn btn-outline" onclick="loadReleases()">Charger les versions</button>
-      <button class="btn btn-red" onclick="applyDowngrade()">Rétrograder</button>
+      <button class="btn btn-outline" id="btn-load-releases">Charger les versions</button>
+      <button class="btn btn-red" id="btn-apply-downgrade">Rétrograder</button>
     </div>
     <div class="alert" id="downgrade-alert"></div>
   </div>
@@ -322,7 +321,7 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
     <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
       Cet email permet de réinitialiser votre mot de passe via le lien "Mot de passe oublié ?" sur la page de connexion.
     </p>
-    <button class="btn btn-primary" onclick="saveRecoveryEmail()" style="margin-bottom:20px">Enregistrer l'email</button>
+    <button class="btn btn-primary" id="btn-save-recovery" style="margin-bottom:20px">Enregistrer l'email</button>
     <div class="alert" id="recovery-result"></div>
 
     <hr style="border:none;border-top:1px solid var(--border);margin:20px 0">
@@ -340,7 +339,7 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
       <input type="password" id="confirm-pw">
     </div>
     <div style="display:flex;gap:8px;align-items:center">
-      <button class="btn btn-primary" onclick="changePassword()">Modifier le mot de passe</button>
+      <button class="btn btn-primary" id="btn-change-password">Modifier le mot de passe</button>
       <a href="/logout" class="btn btn-red" style="text-decoration:none;text-align:center">Déconnexion</a>
     </div>
     <div class="alert" id="account-result"></div>
@@ -352,12 +351,10 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
 // Tab switching
 // ─────────────────────────────────────
 function switchTab(name){
-  document.querySelectorAll('.tab-btn').forEach((b,i)=>{
-    const tabs=['smtp','webhooks','update','account'];
-    b.classList.toggle('active', tabs[i]===name);
+  ['smtp','webhooks','update','account'].forEach(n=>{
+    document.getElementById('tab-btn-'+n).classList.toggle('active', n===name);
+    document.getElementById('tab-'+n).classList.toggle('active', n===name);
   });
-  document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
-  document.getElementById('tab-'+name).classList.add('active');
   if(name==='update')   loadVersion();
   if(name==='smtp')     loadSmtpConfig();
   if(name==='webhooks') loadWebhooksConfig();
@@ -388,7 +385,7 @@ function renderChips(){
     btn.className = 'chip-del';
     btn.type = 'button';
     btn.textContent = '×';
-    btn.setAttribute('onclick', `removeChip(${i})`);
+    btn.addEventListener('click', ()=>removeChip(i));
     chip.appendChild(emailNode);
     chip.appendChild(btn);
     container.insertBefore(chip, input);
@@ -705,6 +702,30 @@ async function initCsrf(){
   try{ const r=await fetch('/api/csrf-token'); const d=await r.json(); _csrfToken=d.token||''; }catch(e){}
 }
 function _ch(extra){ return Object.assign({},extra,{'X-CSRF-Token':_csrfToken}); }
+
+// ─────────────────────────────────────
+// Bind all event listeners (CSP: no inline onclick allowed)
+// ─────────────────────────────────────
+document.getElementById('theme-btn').addEventListener('click', toggleTheme);
+['smtp','webhooks','update','account'].forEach(name=>{
+  document.getElementById('tab-btn-'+name).addEventListener('click', ()=>switchTab(name));
+});
+document.getElementById('email-chips-container').addEventListener('click', ()=>document.getElementById('email-chip-input').focus());
+document.getElementById('email-chip-input').addEventListener('keydown', handleChipKeydown);
+document.getElementById('email-chip-input').addEventListener('blur', addChipFromInput);
+document.getElementById('btn-smtp-save').addEventListener('click', saveSmtp);
+document.getElementById('btn-smtp-test').addEventListener('click', testSmtp);
+['discord','google_chat','teams','synology','generic'].forEach(type=>{
+  document.getElementById('btn-wh-test-'+type).addEventListener('click', ()=>testWebhook(type));
+});
+document.getElementById('btn-wh-save').addEventListener('click', saveWebhooks);
+document.getElementById('btn-update-save').addEventListener('click', saveUpdateConfig);
+document.getElementById('btn-update-check').addEventListener('click', checkUpdate);
+document.getElementById('btn-apply-update').addEventListener('click', applyUpdate);
+document.getElementById('btn-load-releases').addEventListener('click', loadReleases);
+document.getElementById('btn-apply-downgrade').addEventListener('click', applyDowngrade);
+document.getElementById('btn-save-recovery').addEventListener('click', saveRecoveryEmail);
+document.getElementById('btn-change-password').addEventListener('click', changePassword);
 
 _initThemeBtn();
 initCsrf().then(()=>loadSmtpConfig());
