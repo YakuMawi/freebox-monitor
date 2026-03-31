@@ -507,7 +507,7 @@ def background_loop():
 # Report generator
 # ──────────────────────────────────────────────
 
-def render_monthly_report(year: int, month: int) -> str:
+def render_monthly_report(year: int, month: int, nonce: str = "") -> str:
     from calendar import monthrange
     month_names = ["Janvier","Février","Mars","Avril","Mai","Juin",
                    "Juillet","Août","Septembre","Octobre","Novembre","Décembre"]
@@ -572,12 +572,24 @@ def render_monthly_report(year: int, month: int) -> str:
         if v is None: return "—"
         return (fmt_fn(v) if fmt_fn else str(round(v, 1))) + unit
 
+    logo_svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="36" height="36" style="vertical-align:middle;margin-right:10px">'
+        '<rect width="40" height="40" rx="8" fill="#1a1a2e"/>'
+        '<text x="6" y="31" font-family="Arial Black,sans-serif" font-weight="900" font-size="30" fill="#e94560">F</text>'
+        '<circle cx="33" cy="9" r="2.5" fill="#e94560" opacity="0.4"/>'
+        '<circle cx="33" cy="17" r="2.5" fill="#e94560" opacity="0.65"/>'
+        '<circle cx="33" cy="25" r="2.5" fill="#e94560" opacity="0.9"/>'
+        '<line x1="23" y1="17" x2="29" y2="17" stroke="#e94560" stroke-width="1.2" opacity="0.5"/>'
+        '</svg>'
+    )
+
     return f"""<!DOCTYPE html>
 <html lang="fr"><head><meta charset="UTF-8">
 <title>Rapport Freebox — {month_name} {year}</title>
-<style>
+<style nonce="{nonce}">
   body{{font-family:system-ui,sans-serif;background:#0f1117;color:#e2e8f0;padding:32px;}}
-  h1{{color:#4299e1}} h2{{color:#4299e1;font-size:16px;margin-top:32px}}
+  h1{{color:#4299e1;display:flex;align-items:center;font-size:24px}}
+  h2{{color:#4299e1;font-size:16px;margin-top:32px}}
   table{{width:100%;border-collapse:collapse;margin-top:12px}}
   th{{background:#1a1d27;padding:10px;text-align:left;font-size:13px;color:#718096}}
   td{{padding:8px 10px;border-bottom:1px solid #2a2d3a;font-size:13px}}
@@ -586,14 +598,22 @@ def render_monthly_report(year: int, month: int) -> str:
   .stat-card{{background:#1a1d27;border:1px solid #2a2d3a;border-radius:8px;padding:16px}}
   .stat-val{{font-size:24px;font-weight:700;color:#4299e1}}
   .stat-lbl{{font-size:12px;color:#718096;margin-top:4px}}
-  @media print{{body{{background:#fff;color:#000}} .stat-card{{border:1px solid #ccc}}
-    table td,table th{{color:#000}} h1,h2{{color:#2b6cb0}} }}
   .btn{{display:inline-block;margin-bottom:24px;padding:10px 20px;background:#4299e1;
         color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px}}
+  @media print{{
+    body{{background:#fff;color:#000}}
+    .stat-card{{background:#f7fafc;border:1px solid #ccc}}
+    .stat-val{{color:#2b6cb0}} .stat-lbl{{color:#4a5568}}
+    table td,table th{{color:#000}}
+    h1,h2{{color:#2b6cb0}}
+    .btn{{display:none}}
+    * {{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+  }}
 </style>
 </head><body>
-<button class="btn" onclick="window.print()">🖨 Imprimer / Exporter PDF</button>
-<h1>📡 Rapport Freebox — {month_name} {year}</h1>
+<button class="btn" id="btn-print">🖨 Imprimer / Exporter PDF</button>
+<script nonce="{nonce}">document.getElementById('btn-print').addEventListener('click',function(){{window.print();}});</script>
+<h1>{logo_svg}Rapport Freebox — {month_name} {year}</h1>
 <p style="color:#718096;font-size:13px">Généré le {datetime.now().strftime('%d/%m/%Y à %H:%M:%S')}</p>
 
 <h2>Résumé</h2>
@@ -933,7 +953,8 @@ def route_report():
     now   = datetime.now()
     year  = max(2000, min(int(request.args.get("year",  now.year)),  now.year + 1))
     month = max(1,    min(int(request.args.get("month", now.month)), 12))
-    html  = render_monthly_report(year, month)
+    nonce = getattr(g, "csp_nonce", "")
+    html  = render_monthly_report(year, month, nonce)
     return Response(html, mimetype="text/html")
 
 
