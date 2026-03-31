@@ -18,6 +18,7 @@ Déployé en tant que service systemd sur un serveur Linux, accessible depuis n'
 - [Configuration](#configuration)
   - [Compte administrateur](#compte-administrateur)
   - [Alertes SMTP](#alertes-smtp)
+  - [Webhooks](#webhooks)
   - [Récupération de mot de passe](#récupération-de-mot-de-passe)
   - [Mises à jour et rétrogradation](#mises-à-jour-et-rétrogradation)
   - [Port d'écoute](#port-découte)
@@ -207,6 +208,22 @@ Accédez à **Paramètres** → onglet **Alertes SMTP** :
 
 ---
 
+### Webhooks
+
+Accédez à **Paramètres** → onglet **Webhooks** pour envoyer les alertes vers des services tiers :
+
+| Service | Format |
+|---|---|
+| Discord | POST JSON `{"content": "..."}` vers l'URL webhook Discord |
+| Google Chat | POST JSON `{"text": "..."}` vers l'URL webhook Google Chat |
+| Microsoft Teams | POST JSON `{"text": "..."}` via Incoming Webhook Teams |
+| Synology Chat | POST JSON vers l'API externe Synology Chat |
+| Générique (JSON) | POST JSON `{"event", "title", "message", "timestamp"}` vers n'importe quelle URL |
+
+> Utilisez le bouton **Tester** à côté de chaque URL pour vérifier la configuration. Le badge **OK** ou **Erreur** s'affiche après le test.
+
+---
+
 ### Récupération de mot de passe
 
 Depuis la page de connexion, cliquez sur **Mot de passe oublié ?**
@@ -327,12 +344,13 @@ freebox-monitor/
 ├── auth.py                  # Autorisation Freebox (one-shot, génère credentials.json)
 ├── bootstrap.sh             # Script d'installation one-liner (curl)
 ├── install.sh               # Script d'installation complet
+├── uninstall.sh             # Script de désinstallation guidé
 ├── config.json              # Valeurs par défaut de la configuration
 ├── requirements.txt         # Dépendances Python (flask, requests, cryptography)
 ├── VERSION                  # Version courante du logiciel
 ├── templates/
 │   ├── index.html           # Dashboard principal (pop-up mise à jour inclus)
-│   ├── settings.html        # Page paramètres (SMTP, Mise à jour, Compte)
+│   ├── settings.html        # Page paramètres (SMTP, Webhooks, Mise à jour, Compte)
 │   ├── login.html           # Page de connexion
 │   ├── setup.html           # Création du compte initial
 │   ├── forgot_password.html # Demande de réinitialisation de mot de passe
@@ -397,20 +415,26 @@ freebox-monitor/
 
 ## Désinstallation
 
+Un script de désinstallation guidé est inclus. Depuis le répertoire d'installation :
+
 ```bash
-# Arrêter et désactiver le service
-systemctl stop freebox-monitor
-systemctl disable freebox-monitor
-
-# Supprimer le fichier de service systemd
-rm /etc/systemd/system/freebox-monitor.service
-systemctl daemon-reload
-
-# Supprimer le répertoire du projet (données incluses)
-rm -rf /root/freebox-monitor
+bash /root/freebox-monitor/uninstall.sh
 ```
 
-> Cette opération supprime définitivement toutes les données : historique des métriques, journal des coupures, configuration, credentials Freebox et certificats SSL.
+Ou directement depuis GitHub (même si le dossier a été partiellement supprimé) :
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/YakuMawi/freebox-monitor/main/uninstall.sh)
+```
+
+Le script effectue dans l'ordre :
+1. **Arrêt** du service s'il est actif
+2. **Désactivation** du démarrage automatique
+3. **Suppression** du fichier `/etc/systemd/system/freebox-monitor.service` et rechargement du daemon
+4. **Proposition de révoquer** le token Freebox (avec instructions pour le faire manuellement depuis l'interface Freebox)
+5. **Confirmation avant suppression** du répertoire `/root/freebox-monitor` (base de données, config, certificats)
+
+> Cette opération est irréversible : toutes les données (historique des métriques, journal des coupures, configuration, credentials Freebox et certificats SSL) sont définitivement supprimées.
 
 ---
 
@@ -418,6 +442,7 @@ rm -rf /root/freebox-monitor
 
 | Version | Points clés |
 |---|---|
+| **1.1.3** | Correction onglets Paramètres (Webhooks, Mise à jour, Compte) inaccessibles — conformité CSP étendue à `settings.html` (migration `onclick` inline → `addEventListener`) ; ajout du script de désinstallation guidé `uninstall.sh` |
 | **1.1.2** | Audit sécurité complet : rate limiting OTP renforcé, conformité CSP (nonce par requête, suppression des `onclick` inline), cookies `SameSite=Lax`/`Secure`/`HttpOnly`, en-têtes HTTP additionnels, correction installation venv Python 3.12+ (`python3.x-venv` version-spécifique) |
 | **1.1.0** | Chiffrement Fernet des secrets au repos (smtp_password, github_token, app_token Freebox) ; rate limiting persistant en SQLite (résiste aux redémarrages) ; pop-up automatique de mise à jour après connexion avec bouton de mise à jour directe |
 | **1.0.8** | Mode test : différenciation coupures volontaires / pannes réelles, bouton mode test avec bannière, reset compteur par journée, badge et note par coupure dans le journal, statistiques séparées test/réel, calendrier corrigé en thème clair |
@@ -458,6 +483,7 @@ Deployed as a systemd service on a Linux server, accessible from any browser via
 - [Configuration](#configuration-1)
   - [Administrator Account](#administrator-account)
   - [SMTP Alerts](#smtp-alerts)
+  - [Webhooks](#webhooks-1)
   - [Password Recovery](#password-recovery)
   - [Updates and Downgrade](#updates-and-downgrade)
   - [Listening Port](#listening-port)
@@ -647,6 +673,22 @@ Go to **Settings** → **SMTP Alerts** tab:
 
 ---
 
+### Webhooks
+
+Go to **Settings** → **Webhooks** tab to send alerts to third-party services:
+
+| Service | Format |
+|---|---|
+| Discord | POST JSON `{"content": "..."}` to the Discord webhook URL |
+| Google Chat | POST JSON `{"text": "..."}` to the Google Chat webhook URL |
+| Microsoft Teams | POST JSON `{"text": "..."}` via Teams Incoming Webhook |
+| Synology Chat | POST JSON to the Synology Chat external API |
+| Generic (JSON) | POST JSON `{"event", "title", "message", "timestamp"}` to any URL |
+
+> Use the **Test** button next to each URL to verify the configuration. An **OK** or **Error** badge appears after the test.
+
+---
+
 ### Password Recovery
 
 From the login page, click **Forgot password?**
@@ -767,12 +809,13 @@ freebox-monitor/
 ├── auth.py                  # Freebox authorization (one-shot, generates credentials.json)
 ├── bootstrap.sh             # One-liner installation script (curl)
 ├── install.sh               # Full installation script
+├── uninstall.sh             # Guided uninstall script
 ├── config.json              # Default configuration values
 ├── requirements.txt         # Python dependencies (flask, requests, cryptography)
 ├── VERSION                  # Current software version
 ├── templates/
 │   ├── index.html           # Main dashboard (update pop-up included)
-│   ├── settings.html        # Settings page (SMTP, Update, Account)
+│   ├── settings.html        # Settings page (SMTP, Webhooks, Update, Account)
 │   ├── login.html           # Login page
 │   ├── setup.html           # Initial account creation
 │   ├── forgot_password.html # Password reset request
@@ -837,20 +880,26 @@ freebox-monitor/
 
 ## Uninstallation
 
+A guided uninstall script is included. From the installation directory:
+
 ```bash
-# Stop and disable service
-systemctl stop freebox-monitor
-systemctl disable freebox-monitor
-
-# Remove systemd service file
-rm /etc/systemd/system/freebox-monitor.service
-systemctl daemon-reload
-
-# Remove project directory (including all data)
-rm -rf /root/freebox-monitor
+bash /root/freebox-monitor/uninstall.sh
 ```
 
-> This operation permanently deletes all data: metrics history, outage log, configuration, Freebox credentials and SSL certificates.
+Or directly from GitHub (even if the folder has been partially deleted):
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/YakuMawi/freebox-monitor/main/uninstall.sh)
+```
+
+The script performs in order:
+1. **Stops** the service if active
+2. **Disables** automatic startup
+3. **Removes** `/etc/systemd/system/freebox-monitor.service` and reloads the daemon
+4. **Offers to revoke** the Freebox token (with instructions to do it manually from the Freebox interface)
+5. **Asks for confirmation** before deleting `/root/freebox-monitor` (database, config, certificates)
+
+> This operation is irreversible: all data (metrics history, outage log, configuration, Freebox credentials and SSL certificates) is permanently deleted.
 
 ---
 
@@ -858,6 +907,7 @@ rm -rf /root/freebox-monitor
 
 | Version | Highlights |
 |---|---|
+| **1.1.3** | Fix Settings tabs (Webhooks, Update, Account) being inaccessible — CSP compliance extended to `settings.html` (migrated inline `onclick` → `addEventListener`); added guided uninstall script `uninstall.sh` |
 | **1.1.2** | Full security audit: hardened OTP rate limiting, CSP compliance (per-request nonce, removed inline `onclick`), `SameSite=Lax`/`Secure`/`HttpOnly` cookies, additional HTTP headers, fix venv installation on Python 3.12+ (version-specific `python3.x-venv` package) |
 | **1.1.0** | Fernet encryption of secrets at rest (smtp_password, github_token, Freebox app_token); persistent SQLite rate limiting (survives restarts); automatic update pop-up after login with direct update button |
 | **1.0.8** | Test mode: differentiating planned outages from real failures, test mode button with banner, counter reset by day, badge and note per outage in the log, separate test/real statistics, calendar fix in light theme |
