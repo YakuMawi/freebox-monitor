@@ -31,6 +31,10 @@ h1{font-size:22px;font-weight:700;margin-bottom:4px}
   font-size:13px;margin-bottom:16px}
 .link-row{margin-top:14px;font-size:13px;text-align:center;color:var(--muted)}
 .link-row a{color:var(--blue)}
+.lockout{background:rgba(252,129,129,.12);color:var(--red);padding:12px;border-radius:8px;
+  font-size:13px;margin-bottom:16px;line-height:1.5}
+.lockout strong{display:block;font-size:22px;margin:6px 0 2px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
 </style>
 </head>
 <body>
@@ -47,18 +51,24 @@ h1{font-size:22px;font-weight:700;margin-bottom:4px}
   </div>
   <h1>Freebox Monitor</h1>
   <p class="sub">Connectez-vous pour accéder au dashboard</p>
+  {% if retry_after %}
+  <div class="lockout">
+    Trop de tentatives de connexion.<br>
+    Réessayez dans <strong><span id="countdown">{{ retry_after }}</span> s</strong>
+  </div>
+  {% endif %}
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
   {% if success %}<div class="success">{{ success }}</div>{% endif %}
   <form method="POST" action="/login">
     <div class="form-group">
       <label>Nom d'utilisateur</label>
-      <input type="text" name="username" required autofocus>
+      <input type="text" name="username" required {% if not retry_after %}autofocus{% endif %}>
     </div>
     <div class="form-group">
       <label>Mot de passe</label>
       <input type="password" name="password" required>
     </div>
-    <button type="submit" class="btn">Connexion</button>
+    <button type="submit" class="btn" id="submit-btn" {% if retry_after %}disabled{% endif %}>Connexion</button>
   </form>
   <div class="link-row"><a href="/forgot-password">Mot de passe oublié ?</a></div>
   <div class="link-row" style="margin-top:8px"><button onclick="toggleTheme()" id="theme-btn" style="background:none;border:none;cursor:pointer;font-size:18px">☀️</button></div>
@@ -66,6 +76,18 @@ h1{font-size:22px;font-weight:700;margin-bottom:4px}
 <script nonce="{{ g.csp_nonce }}">
 function toggleTheme(){var c=document.documentElement.getAttribute('data-theme')||'dark';var n=c==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',n);localStorage.setItem('fbx-theme',n);document.getElementById('theme-btn').textContent=n==='dark'?'☀️':'🌙';}
 (function(){var t=document.documentElement.getAttribute('data-theme')||'dark';var b=document.getElementById('theme-btn');if(b)b.textContent=t==='dark'?'☀️':'🌙';})();
+{% if retry_after %}
+(function(){
+  var el=document.getElementById('countdown');
+  var btn=document.getElementById('submit-btn');
+  var s={{ retry_after }};
+  var iv=setInterval(function(){
+    s--;
+    if(s<=0){clearInterval(iv);btn.disabled=false;el.closest('.lockout').remove();}
+    else{el.textContent=s;}
+  },1000);
+})();
+{% endif %}
 </script>
 </body>
 </html>

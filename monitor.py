@@ -238,16 +238,16 @@ def collect_system():
         "disk_status": s.get("disk_status", ""),
         "sensors":    sens,
         "fans":       fans,
-        # Champs aplatis pour compatibilité graphique
-        "temp_cpu_cp_master": sens.get("temp_cpu_cp_master", 0),
-        "temp_cpu_ap":        sens.get("temp_cpu_ap", 0),
-        "temp_cpu_cp_slave":  sens.get("temp_cpu_cp_slave", 0),
-        "temp_t1":            sens.get("temp_t1", 0),
-        "temp_t2":            sens.get("temp_t2", 0),
-        "temp_t3":            sens.get("temp_t3", 0),
-        "temp_hdd0":          sens.get("temp_hdd0", 0),
-        "fan0_speed":         fans.get("fan0_speed", 0),
-        "fan1_speed":         fans.get("fan1_speed", 0),
+        # Champs aplatis pour compatibilité graphique — résolution dynamique par alias
+        "temp_cpu_cp_master": db._first(sens, db._S_CPU_MAIN),
+        "temp_cpu_ap":        db._first(sens, db._S_CPU_AP),
+        "temp_cpu_cp_slave":  db._first(sens, db._S_CPU_SLAVE),
+        "temp_t1":            db._first(sens, db._S_T1),
+        "temp_t2":            db._first(sens, db._S_T2),
+        "temp_t3":            db._first(sens, db._S_T3),
+        "temp_hdd0":          db._first(sens, db._S_HDD0),
+        "fan0_speed":         db._first(fans, db._F_FAN0),
+        "fan1_speed":         db._first(fans, db._F_FAN1),
     }
 
 
@@ -764,10 +764,11 @@ def setup():
 def login():
     if db.user_count() == 0:
         return redirect(url_for("setup"))
+    ip = _get_ip()
     if request.method == "POST":
-        ip = _get_ip()
         if db.is_rate_limited_db(ip, "login", RATE_LOGIN_MAX, RATE_LOGIN_WINDOW):
-            return render_template("login.html", error="Trop de tentatives. Réessayez dans quelques minutes.")
+            retry_after = db.rate_limit_retry_after(ip, "login", RATE_LOGIN_MAX, RATE_LOGIN_WINDOW)
+            return render_template("login.html", retry_after=retry_after)
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
         user = db.get_user(username)
@@ -775,7 +776,8 @@ def login():
             session["user"] = username
             return redirect(url_for("index"))
         return render_template("login.html", error="Identifiants incorrects")
-    return render_template("login.html")
+    retry_after = db.rate_limit_retry_after(ip, "login", RATE_LOGIN_MAX, RATE_LOGIN_WINDOW)
+    return render_template("login.html", retry_after=retry_after if retry_after > 0 else None)
 
 
 @app.route("/logout")

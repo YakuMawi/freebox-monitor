@@ -38,8 +38,8 @@ Déployé en tant que service systemd sur un serveur Linux, accessible depuis n'
 ### Dashboard temps réel
 - **Connexion** — état (up/down), débit descendant/montant en Mbit/s, bande passante max, données transférées
 - **Système** — modèle Freebox, version firmware, temps de fonctionnement
-- **Températures** — CPU (master, AP, slave), sondes T1/T2/T3, disque HDD, avec code couleur (vert → orange → rouge)
-- **Ventilateurs** — vitesse en RPM avec indicateur visuel
+- **Températures** — tous les capteurs détectés automatiquement (compatible Delta, Pop, Ultra, Révolution…), avec code couleur (vert → orange → rouge)
+- **Ventilateurs** — vitesse en RPM, détection automatique du nombre de ventilateurs
 - **Réseau LAN** — nombre d'hôtes actifs
 - **Switch intégré** — état des ports, vitesse, duplex, statistiques RX/TX
 - **Stockage** — disques et partitions avec capacité, espace libre, température, barre de progression
@@ -68,6 +68,7 @@ Déployé en tant que service systemd sur un serveur Linux, accessible depuis n'
 - SSL/HTTPS avec certificat auto-signé généré à l'installation
 - **Chiffrement Fernet** des secrets sensibles au repos (mot de passe SMTP, token GitHub, token Freebox)
 - **Rate limiting persistant** en base SQLite (résiste aux redémarrages du service)
+- **Compte à rebours** sur la page de connexion en cas de blocage par trop de tentatives
 - Thème clair et sombre avec persistance de la préférence
 
 ### Mises à jour
@@ -442,6 +443,7 @@ Le script effectue dans l'ordre :
 
 | Version | Points clés |
 |---|---|
+| **1.1.5** | Compte à rebours sur la page de connexion lors d'un blocage par rate limiting (bouton désactivé, décompte en secondes, réactivation automatique) ; correction critique SMTP — le mot de passe n'était pas déchiffré avant envoi (Fernet), bloquant tous les emails (alertes, OTP de récupération, email de test) ; support Freebox Ultra — capteurs et ventilateurs désormais détectés dynamiquement depuis l'API (fin des IDs hardcodés), grille de capteurs adaptée à tous les modèles |
 | **1.1.4** | Correction rapport mensuel — CSS bloqué par CSP (ajout nonce sur `<style>` et `<script>`), mauvais logo remplacé par le SVG Freebox, `print-color-adjust:exact` pour les couleurs du calendrier à l'impression, bouton Imprimer migré vers `addEventListener` |
 | **1.1.3** | Correction onglets Paramètres (Webhooks, Mise à jour, Compte) inaccessibles — conformité CSP étendue à `settings.html` (migration `onclick` inline → `addEventListener`) ; ajout du script de désinstallation guidé `uninstall.sh` |
 | **1.1.2** | Audit sécurité complet : rate limiting OTP renforcé, conformité CSP (nonce par requête, suppression des `onclick` inline), cookies `SameSite=Lax`/`Secure`/`HttpOnly`, en-têtes HTTP additionnels, correction installation venv Python 3.12+ (`python3.x-venv` version-spécifique) |
@@ -504,8 +506,8 @@ Deployed as a systemd service on a Linux server, accessible from any browser via
 ### Real-time Dashboard
 - **Connection** — state (up/down), download/upload speed in Mbit/s, max bandwidth, transferred data
 - **System** — Freebox model, firmware version, uptime
-- **Temperatures** — CPU (master, AP, slave), probes T1/T2/T3, HDD disk, with color coding (green → orange → red)
-- **Fans** — speed in RPM with visual indicator
+- **Temperatures** — all sensors detected automatically (compatible with Delta, Pop, Ultra, Révolution…), with color coding (green → orange → red)
+- **Fans** — speed in RPM, automatic detection of number of fans
 - **LAN Network** — number of active hosts
 - **Built-in Switch** — port status, speed, duplex, RX/TX statistics
 - **Storage** — drives and partitions with capacity, free space, temperature, progress bar
@@ -534,6 +536,7 @@ Deployed as a systemd service on a Linux server, accessible from any browser via
 - SSL/HTTPS with self-signed certificate generated at installation
 - **Fernet encryption** of sensitive secrets at rest (SMTP password, GitHub token, Freebox token)
 - **Persistent rate limiting** in SQLite database (survives service restarts)
+- **Countdown timer** on the login page when blocked due to too many failed attempts
 - Light and dark theme with preference persistence
 
 ### Updates
@@ -908,6 +911,7 @@ The script performs in order:
 
 | Version | Highlights |
 |---|---|
+| **1.1.5** | Login countdown on rate-limit lockout (button disabled, seconds countdown, auto-re-enable) ; critical SMTP fix — password was not decrypted before sending (Fernet), blocking all emails (alerts, OTP recovery, test email) ; Freebox Ultra support — sensors and fans now dynamically detected from the API (no more hardcoded IDs), sensor grid adapts to all Freebox models |
 | **1.1.4** | Fix monthly report — CSS blocked by CSP (added nonce on `<style>` and `<script>`), wrong logo replaced with Freebox SVG, `print-color-adjust:exact` for calendar colors when printing, print button migrated to `addEventListener` |
 | **1.1.3** | Fix Settings tabs (Webhooks, Update, Account) being inaccessible — CSP compliance extended to `settings.html` (migrated inline `onclick` → `addEventListener`); added guided uninstall script `uninstall.sh` |
 | **1.1.2** | Full security audit: hardened OTP rate limiting, CSP compliance (per-request nonce, removed inline `onclick`), `SameSite=Lax`/`Secure`/`HttpOnly` cookies, additional HTTP headers, fix venv installation on Python 3.12+ (version-specific `python3.x-venv` package) |

@@ -12,6 +12,8 @@ from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
+import crypto
+
 log = logging.getLogger(__name__)
 
 
@@ -75,7 +77,7 @@ def _send(config: dict, subject: str, html: str) -> tuple:
     host     = config.get("smtp_host", "")
     port     = int(config.get("smtp_port", 587))
     user     = config.get("smtp_user", "")
-    password = config.get("smtp_password", "")
+    password = crypto.decrypt(config.get("smtp_password", ""))
     from_    = config.get("smtp_from", "") or user
     to_      = config.get("alert_to", "")
     tls      = str(config.get("smtp_tls", "true")).lower() == "true"
@@ -296,7 +298,7 @@ def send_reset_code_email(config: dict, to_email: str, username: str, code: str)
     host     = config.get("smtp_host", "")
     port     = int(config.get("smtp_port", 587))
     user     = config.get("smtp_user", "")
-    password = config.get("smtp_password", "")
+    password = crypto.decrypt(config.get("smtp_password", ""))
     from_    = config.get("smtp_from", "") or user
     tls      = str(config.get("smtp_tls", "true")).lower() == "true"
     ssl      = str(config.get("smtp_ssl", "false")).lower() == "true"

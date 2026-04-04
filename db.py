@@ -114,6 +114,28 @@ def _conn():
             c.close()
 
 
+# Aliases par ordre de priorité pour chaque capteur logique.
+# Couvre : Delta/Revolution (cp_master/ap/slave), Ultra (cpua/cpub), et génériques.
+_S_CPU_MAIN  = ["temp_cpu_cp_master", "temp_cpua", "temp_cpu",  "temp_cpu1", "temp_t1"]
+_S_CPU_AP    = ["temp_cpu_ap",        "temp_cpub", "temp_cpu2"]
+_S_CPU_SLAVE = ["temp_cpu_cp_slave",  "temp_cpuc", "temp_cpu3"]
+_S_HDD0      = ["temp_hdd0",          "temp_hdd",  "temp_disk"]
+_S_T1        = ["temp_t1",  "temp_sw",  "temp_pcie"]
+_S_T2        = ["temp_t2",  "temp_nb"]
+_S_T3        = ["temp_t3"]
+_F_FAN0      = ["fan0_speed", "fan_speed", "fan0"]
+_F_FAN1      = ["fan1_speed", "fan1"]
+
+
+def _first(d: dict, keys: list, default=0):
+    """Retourne la première valeur non nulle parmi les clés candidates."""
+    for k in keys:
+        v = d.get(k, 0)
+        if v:
+            return v
+    return default
+
+
 def insert_metric(data: dict):
     m = data
     conn = m.get("connection", {})
@@ -139,13 +161,13 @@ def insert_metric(data: dict):
             conn.get("rate_down", 0),    conn.get("rate_up", 0),
             conn.get("bandwidth_down", 0), conn.get("bandwidth_up", 0),
             conn.get("bytes_down", 0),   conn.get("bytes_up", 0),
-            sens.get("temp_hdd0", 0),
-            sens.get("temp_t1", 0),      sens.get("temp_t2", 0),
-            sens.get("temp_t3", 0),
-            sens.get("temp_cpu_cp_master", 0),
-            sens.get("temp_cpu_ap", 0),
-            sens.get("temp_cpu_cp_slave", 0),
-            fans.get("fan0_speed", 0),   fans.get("fan1_speed", 0),
+            _first(sens, _S_HDD0),
+            _first(sens, _S_T1),         _first(sens, _S_T2),
+            _first(sens, _S_T3),
+            _first(sens, _S_CPU_MAIN),
+            _first(sens, _S_CPU_AP),
+            _first(sens, _S_CPU_SLAVE),
+            _first(fans, _F_FAN0),       _first(fans, _F_FAN1),
             hosts,
             sys.get("uptime_val", 0),
         ))
@@ -446,6 +468,25 @@ def is_rate_limited_db(ip: str, action: str, max_attempts: int, window_s: int) -
             (ip, action, now)
         )
     return False
+
+
+def rate_limit_retry_after(ip: str, action: str, max_attempts: int, window_s: int) -> int:
+    """Retourne les secondes restantes avant fin du blocage, ou 0 si non limité.
+    Ne modifie pas la table (lecture seule)."""
+    now = int(time.time())
+    since = now - window_s
+    with _conn() as c:
+        count = c.execute(
+            "SELECT COUNT(*) FROM rate_limits WHERE ip=? AND action=? AND ts>=?",
+            (ip, action, since)
+        ).fetchone()[0]
+        if count < max_attempts:
+            return 0
+        oldest = c.execute(
+            "SELECT MIN(ts) FROM rate_limits WHERE ip=? AND action=? AND ts>=?",
+            (ip, action, since)
+        ).fetchone()[0]
+    return max(0, oldest + window_s - now) if oldest else 0
 
 
 def prune_rate_limits(max_age_s: int = 86400):

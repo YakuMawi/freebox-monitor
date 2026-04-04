@@ -777,11 +777,13 @@ function updateUI(m){
 
   const cpuM = sys.temp_cpu_cp_master||0;
   const cpuAP = sys.temp_cpu_ap||0;
+  // Fallback : si les IDs classiques sont absents (ex: Freebox Ultra), prendre le 1er capteur dispo
+  const cpuMain = cpuM || Object.values(sens).find(v=>v>0) || 0;
   const cpuEl = document.getElementById('temp-cpu-main');
-  if(cpuEl){ cpuEl.textContent = cpuM?cpuM+'°C':'—'; cpuEl.style.color=tempColor(cpuM); }
+  if(cpuEl){ cpuEl.textContent = cpuMain?cpuMain+'°C':'—'; cpuEl.style.color=tempColor(cpuMain); }
   setText('temp-cpu-ap-sub','AP: '+(cpuAP?cpuAP+'°C':'—'));
-  document.getElementById('pb-temp').style.width=Math.min(100,cpuM)+'%';
-  document.getElementById('pb-temp').style.background=tempColor(cpuM);
+  document.getElementById('pb-temp').style.width=Math.min(100,cpuMain)+'%';
+  document.getElementById('pb-temp').style.background=tempColor(cpuMain);
 
   setText('fan-main',  (sys.fan0_speed||0)+(sys.fan0_speed?' RPM':'—'));
   setText('fan2-sub',  'Fan 2: '+(sys.fan1_speed?sys.fan1_speed+' RPM':'—'));
@@ -822,38 +824,46 @@ function updateUI(m){
     document.getElementById('ftth-content').style.display='none';
   }
 
-  // Sensors grid
+  // Sensors grid — dynamique : affiche tous les capteurs retournés par l'API
   const sg = document.getElementById('sensors-grid');
-  const sensorMap = [
-    {key:'temp_cpu_cp_master', label:'CPU CP Master'},
-    {key:'temp_cpu_ap',        label:'CPU AP'},
-    {key:'temp_cpu_cp_slave',  label:'CPU CP Slave'},
-    {key:'temp_t1',            label:'Température 1'},
-    {key:'temp_t2',            label:'Température 2'},
-    {key:'temp_t3',            label:'Température 3'},
-    {key:'temp_hdd0',          label:'Disque dur 1'},
-  ];
-  sg.innerHTML = sensorMap.map(s=>{
-    const v = sys[s.key]||0;
-    return `<div class="sensor-item">
-      <div class="sensor-name">${s.label}</div>
-      <div class="sensor-val" style="color:${tempColor(v)}">${v?v+'°C':'—'}</div>
-    </div>`;
-  }).join('');
+  const sensEntries = Object.entries(sens).filter(([,v])=>v>0);
+  if(sensEntries.length){
+    const labelMap = {
+      temp_cpu_cp_master:'CPU CP Master', temp_cpu_ap:'CPU AP',
+      temp_cpu_cp_slave:'CPU CP Slave',   temp_cpua:'CPU A',
+      temp_cpub:'CPU B',                  temp_cpuc:'CPU C',
+      temp_cpu:'CPU',                     temp_cpu1:'CPU 1',
+      temp_cpu2:'CPU 2',                  temp_t1:'Température 1',
+      temp_t2:'Température 2',            temp_t3:'Température 3',
+      temp_hdd0:'Disque 1',               temp_hdd:'Disque',
+      temp_sw:'Switch',                   temp_pcie:'PCIe',
+      temp_nb:'NorthBridge',
+    };
+    sg.innerHTML = sensEntries.map(([k,v])=>{
+      const label = labelMap[k] || k.replace(/^temp_/,'').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+      return `<div class="sensor-item">
+        <div class="sensor-name">${label}</div>
+        <div class="sensor-val" style="color:${tempColor(v)}">${v}°C</div>
+      </div>`;
+    }).join('');
+  } else {
+    sg.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px">Aucun capteur disponible</div>';
+  }
 
-  // Fans
+  // Fans — dynamique
   const fl = document.getElementById('fans-list');
-  const fanMap=[
-    {key:'fan0_speed',label:'Ventilateur 1'},
-    {key:'fan1_speed',label:'Ventilateur 2'},
-  ];
-  fl.innerHTML = fanMap.map(f=>{
-    const v=sys[f.key]||0;
-    return `<div class="fan-item">
-      <div class="fan-name">💨 ${f.label}</div>
-      <div class="fan-val">${v?v+' RPM':'—'}</div>
-    </div>`;
-  }).join('');
+  const fanEntries = Object.entries(fans);
+  if(fanEntries.length){
+    fl.innerHTML = fanEntries.map(([k,v],i)=>{
+      const label = 'Ventilateur '+(i+1);
+      return `<div class="fan-item">
+        <div class="fan-name">💨 ${label}</div>
+        <div class="fan-val">${v?v+' RPM':'—'}</div>
+      </div>`;
+    }).join('');
+  } else {
+    fl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px">Aucun ventilateur détecté</div>';
+  }
 }
 
 // ─────────────────────────────────────────
