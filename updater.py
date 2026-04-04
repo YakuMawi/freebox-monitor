@@ -4,6 +4,8 @@ updater.py — Vérification et application des mises à jour GitHub.
 import os
 import io
 import shutil
+import subprocess
+import sys
 import zipfile
 import logging
 import tempfile
@@ -150,6 +152,23 @@ def apply_update(repo: str, token: str = None, tag: str = None) -> tuple:
                     shutil.copytree(src, dst)
                 else:
                     shutil.copy2(src, dst)
+
+        # Mise à jour des dépendances Python
+        pip = os.path.join(project_dir, "venv", "bin", "pip")
+        req = os.path.join(project_dir, "requirements.txt")
+        if os.path.exists(pip) and os.path.exists(req):
+            result = subprocess.run(
+                [pip, "install", "-q", "-r", req],
+                capture_output=True, text=True, timeout=120
+            )
+            if result.returncode != 0:
+                log.warning("pip install partiel : %s", result.stderr)
+        else:
+            # Fallback : pip du venv courant (sys.executable)
+            pip_fallback = os.path.join(os.path.dirname(sys.executable), "pip")
+            if os.path.exists(pip_fallback) and os.path.exists(req):
+                subprocess.run([pip_fallback, "install", "-q", "-r", req],
+                               capture_output=True, timeout=120)
 
         return True, f"Version {target_version} installée"
 

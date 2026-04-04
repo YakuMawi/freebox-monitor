@@ -1037,9 +1037,14 @@ def route_update_apply():
 
 
 def _restart_service():
-    """Attempt to restart the systemd service after update."""
+    """Restart the systemd service after update. Tries common service name variants."""
     time.sleep(2)
-    subprocess.run(["systemctl", "restart", "freebox-monitor.service"], capture_output=True)
+    for name in ("freebox-monitor.service", "freebox-monitor"):
+        r = subprocess.run(["systemctl", "restart", name], capture_output=True)
+        if r.returncode == 0:
+            return
+    # Fallback : relance directe du process si systemd indisponible
+    log.warning("systemctl indisponible — le service doit être redémarré manuellement")
 
 
 # ──────────────────────────────────────────────

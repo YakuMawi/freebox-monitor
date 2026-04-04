@@ -443,6 +443,7 @@ Le script effectue dans l'ordre :
 
 | Version | Points clés |
 |---|---|
+| **1.1.6** | Correction mise à jour depuis l'interface — dépendances Python (`pip install -r requirements.txt`) installées automatiquement après téléchargement, évitant tout crash au redémarrage si de nouveaux packages sont requis ; robustesse du redémarrage systemd (essai de plusieurs noms de service, log explicite si systemd indisponible) |
 | **1.1.5** | Compte à rebours sur la page de connexion lors d'un blocage par rate limiting (bouton désactivé, décompte en secondes, réactivation automatique) ; correction critique SMTP — le mot de passe n'était pas déchiffré avant envoi (Fernet), bloquant tous les emails (alertes, OTP de récupération, email de test) ; support Freebox Ultra — capteurs et ventilateurs désormais détectés dynamiquement depuis l'API (fin des IDs hardcodés), grille de capteurs adaptée à tous les modèles |
 | **1.1.4** | Correction rapport mensuel — CSS bloqué par CSP (ajout nonce sur `<style>` et `<script>`), mauvais logo remplacé par le SVG Freebox, `print-color-adjust:exact` pour les couleurs du calendrier à l'impression, bouton Imprimer migré vers `addEventListener` |
 | **1.1.3** | Correction onglets Paramètres (Webhooks, Mise à jour, Compte) inaccessibles — conformité CSP étendue à `settings.html` (migration `onclick` inline → `addEventListener`) ; ajout du script de désinstallation guidé `uninstall.sh` |
@@ -911,6 +912,7 @@ The script performs in order:
 
 | Version | Highlights |
 |---|---|
+| **1.1.6** | Fix in-app update — Python dependencies (`pip install -r requirements.txt`) are now automatically installed after download, preventing service crash on restart if new packages are required; improved systemd restart robustness (tries multiple service name variants, explicit log if systemd unavailable) |
 | **1.1.5** | Login countdown on rate-limit lockout (button disabled, seconds countdown, auto-re-enable) ; critical SMTP fix — password was not decrypted before sending (Fernet), blocking all emails (alerts, OTP recovery, test email) ; Freebox Ultra support — sensors and fans now dynamically detected from the API (no more hardcoded IDs), sensor grid adapts to all Freebox models |
 | **1.1.4** | Fix monthly report — CSS blocked by CSP (added nonce on `<style>` and `<script>`), wrong logo replaced with Freebox SVG, `print-color-adjust:exact` for calendar colors when printing, print button migrated to `addEventListener` |
 | **1.1.3** | Fix Settings tabs (Webhooks, Update, Account) being inaccessible — CSP compliance extended to `settings.html` (migrated inline `onclick` → `addEventListener`); added guided uninstall script `uninstall.sh` |
