@@ -559,7 +559,17 @@ header{display:flex;align-items:center;justify-content:space-between;
     <tbody id="outages-body"></tbody>
   </table>
   <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <button class="btn" id="btn-more-outages">Charger plus</button>
+    <div style="display:flex;gap:6px;align-items:center">
+      <button class="btn" id="btn-outages-prev" disabled>&#8249;</button>
+      <span id="outages-page-info" style="font-size:12px;color:var(--muted);white-space:nowrap">Page 1</span>
+      <button class="btn" id="btn-outages-next">&#8250;</button>
+      <select id="outages-per-page" style="padding:4px 8px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;cursor:pointer">
+        <option value="5" selected>5 / page</option>
+        <option value="10">10 / page</option>
+        <option value="25">25 / page</option>
+        <option value="50">50 / page</option>
+      </select>
+    </div>
     <span style="font-size:12px;color:var(--muted);margin-left:8px">Marquer un jour comme tests :</span>
     <input type="date" id="reset-day-input" style="padding:5px 10px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;outline:none">
     <button class="btn btn-test" id="btn-reset-day">Appliquer</button>
@@ -1034,41 +1044,47 @@ function updateStorage(st){
 // ─────────────────────────────────────────
 // Outages
 // ─────────────────────────────────────────
-let outagesOffset=0;
-function updateOutages(rows, append=false){
+let outagesPage=1;
+let outagesPerPage=5;
+function updateOutages(data){
+  const rows=data.items||[];
+  const total=data.total||0;
   const tb=document.getElementById('outages-body');
-  if(!append) tb.innerHTML='';
-  if(!rows||!rows.length){
-    if(!append) tb.innerHTML='<tr><td colspan="5" style="color:var(--muted)">Aucune coupure enregistrée</td></tr>';
-    document.getElementById('btn-more-outages').style.display='none';
-    return;
+  tb.innerHTML='';
+  if(!rows.length){
+    tb.innerHTML='<tr><td colspan="5" style="color:var(--muted)">Aucune coupure enregistrée</td></tr>';
+  } else {
+    rows.forEach(o=>{
+      const ongoing=!o.ended_at;
+      const isTest=o.is_test===1||o.is_test===true;
+      const badgeHtml=isTest
+        ?`<span class="badge-test-outage" title="Cliquer pour marquer comme réelle" data-outage-id="${o.id}" data-outage-toggle="false" style="cursor:pointer">🧪 Test</span>`
+        :`<span class="badge-real" title="Cliquer pour marquer comme test" data-outage-id="${o.id}" data-outage-toggle="true" style="cursor:pointer">⚠️ Réelle</span>`;
+      const noteHtml=`<div class="note-cell">
+        <span class="note-text" id="note-text-${o.id}" data-outage-id="${o.id}" data-outage-note="1" title="Cliquer pour modifier" style="cursor:pointer">${o.note?esc(o.note):'<span style="opacity:.4">—</span>'}</span>
+      </div>`;
+      const causeHtml=ongoing
+        ?`<span class="badge br">En cours</span>`
+        :`<span style="font-size:11px;color:var(--muted)">${esc(o.cause||'')}</span>`;
+      tb.innerHTML+=`<tr>
+        <td>${esc(o.started_fmt||'—')}</td>
+        <td>${esc(o.ended_fmt||'—')}</td>
+        <td>${esc(o.duration_fmt||'—')}</td>
+        <td>${badgeHtml}</td>
+        <td>${causeHtml}${noteHtml}</td>
+      </tr>`;
+    });
   }
-  rows.forEach(o=>{
-    const ongoing=!o.ended_at;
-    const isTest=o.is_test===1||o.is_test===true;
-    const badgeHtml=isTest
-      ?`<span class="badge-test-outage" title="Cliquer pour marquer comme réelle" data-outage-id="${o.id}" data-outage-toggle="false" style="cursor:pointer">🧪 Test</span>`
-      :`<span class="badge-real" title="Cliquer pour marquer comme test" data-outage-id="${o.id}" data-outage-toggle="true" style="cursor:pointer">⚠️ Réelle</span>`;
-    const noteHtml=`<div class="note-cell">
-      <span class="note-text" id="note-text-${o.id}" data-outage-id="${o.id}" data-outage-note="1" title="Cliquer pour modifier" style="cursor:pointer">${o.note?esc(o.note):'<span style="opacity:.4">—</span>'}</span>
-    </div>`;
-    const causeHtml=ongoing
-      ?`<span class="badge br">En cours</span>`
-      :`<span style="font-size:11px;color:var(--muted)">${esc(o.cause||'')}</span>`;
-    tb.innerHTML+=`<tr>
-      <td>${esc(o.started_fmt||'—')}</td>
-      <td>${esc(o.ended_fmt||'—')}</td>
-      <td>${esc(o.duration_fmt||'—')}</td>
-      <td>${badgeHtml}</td>
-      <td>${causeHtml}${noteHtml}</td>
-    </tr>`;
-  });
-  document.getElementById('btn-more-outages').style.display='block';
+  const totalPages=Math.max(1,Math.ceil(total/outagesPerPage));
+  document.getElementById('outages-page-info').textContent=
+    `Page ${outagesPage} / ${totalPages} — ${total} coupure${total!==1?'s':''}`;
+  document.getElementById('btn-outages-prev').disabled=outagesPage<=1;
+  document.getElementById('btn-outages-next').disabled=outagesPage>=totalPages;
 }
 function toggleOutageType(id, makeTest){
   fetch(`/api/outages/${id}`,{method:'PATCH',headers:_ch({'Content-Type':'application/json'}),
     body:JSON.stringify({is_test:makeTest})})
-  .then(()=>{ outagesOffset=0; fetchOutages(); });
+  .then(()=>{ outagesPage=1; fetchOutages(); });
 }
 function editNote(id){
   const note=prompt('Note pour cette coupure (laisser vide pour effacer) :',
@@ -1076,11 +1092,7 @@ function editNote(id){
   if(note===null) return; // annulé
   fetch(`/api/outages/${id}`,{method:'PATCH',headers:_ch({'Content-Type':'application/json'}),
     body:JSON.stringify({note})})
-  .then(()=>{ outagesOffset=0; fetchOutages(); });
-}
-function loadMoreOutages(){
-  outagesOffset+=50;
-  fetchOutages(true);
+  .then(()=>{ outagesPage=1; fetchOutages(); });
 }
 
 // ─────────────────────────────────────────
@@ -1146,7 +1158,7 @@ async function resetOutageDay(){
     headers:_ch({'Content-Type':'application/json'}),
     body:JSON.stringify({dates:[date]})});
   const d=await r.json();
-  if(d.ok){ outagesOffset=0; fetchOutages(); fetchCalendar(); }
+  if(d.ok){ outagesPage=1; fetchOutages(); fetchCalendar(); }
   else alert('Erreur: '+d.msg);
 }
 
@@ -1171,10 +1183,11 @@ async function fetchHistory(){
 async function fetchStats(){
   const r=await fetch('/api/stats?period='+activePeriod); return r.json();
 }
-async function fetchOutages(append=false){
-  const r=await fetch(`/api/outages?limit=50&offset=${outagesOffset}`);
+async function fetchOutages(){
+  const offset=(outagesPage-1)*outagesPerPage;
+  const r=await fetch(`/api/outages?limit=${outagesPerPage}&offset=${offset}`);
   const data=await r.json();
-  updateOutages(data, append);
+  updateOutages(data);
 }
 async function fetchCalendar(){
   const r=await fetch(`/api/calendar?year=${calYear}&month=${calMonth}`);
@@ -1324,7 +1337,11 @@ function toggleTilePanel(){
   _bind('btn-tile-panel',       ()=>toggleTilePanel());
   _bind('btn-cal-prev',         ()=>calNav(-1));
   _bind('btn-cal-next',         ()=>calNav(+1));
-  _bind('btn-more-outages',     ()=>loadMoreOutages());
+  _bind('btn-outages-prev',     ()=>{ outagesPage--; fetchOutages(); });
+  _bind('btn-outages-next',     ()=>{ outagesPage++; fetchOutages(); });
+  document.getElementById('outages-per-page').addEventListener('change',e=>{
+    outagesPerPage=parseInt(e.target.value); outagesPage=1; fetchOutages();
+  });
   _bind('btn-reset-day',        ()=>resetOutageDay());
   _bind('btn-open-report',      ()=>openReport());
   _bind('btn-close-report',     ()=>document.getElementById('report-modal').classList.remove('open'));

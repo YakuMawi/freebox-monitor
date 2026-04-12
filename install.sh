@@ -100,11 +100,13 @@ else
     echo "✓ credentials.json existant conservé"
 fi
 
-# 5. Créer le service systemd
+# 5. Installer le service de démarrage automatique
 echo ""
-echo "→ Installation du service systemd..."
+echo "→ Installation du service de démarrage..."
 
-cat > /tmp/${SERVICE_NAME}.service <<EOF
+if pidof systemd > /dev/null 2>&1 || [ "$(ps -p 1 -o comm=)" = "systemd" ]; then
+    # systemd disponible
+    cat > /tmp/${SERVICE_NAME}.service <<EOF
 [Unit]
 Description=Freebox Monitor
 After=network-online.target
@@ -121,23 +123,47 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 EOF
+    mv /tmp/${SERVICE_NAME}.service /etc/systemd/system/${SERVICE_NAME}.service
+    systemctl daemon-reload
+    systemctl enable ${SERVICE_NAME}.service
+    echo "✓ Service systemd installé et activé"
 
-mv /tmp/${SERVICE_NAME}.service /etc/systemd/system/${SERVICE_NAME}.service
-systemctl daemon-reload
-systemctl enable ${SERVICE_NAME}.service
-echo "✓ Service systemd installé et activé"
-
-# 6. Démarrer le service
-echo ""
-echo "→ Démarrage du service..."
-systemctl start ${SERVICE_NAME}.service
-sleep 2
-
-if systemctl is-active --quiet ${SERVICE_NAME}.service; then
-    echo "✓ Service démarré avec succès"
+    # 6. Démarrer le service
+    echo ""
+    echo "→ Démarrage du service..."
+    systemctl start ${SERVICE_NAME}.service
+    sleep 2
+    if systemctl is-active --quiet ${SERVICE_NAME}.service; then
+        echo "✓ Service démarré avec succès"
+    else
+        echo "⚠ Le service n'a pas démarré correctement. Vérifiez avec:"
+        echo "  sudo journalctl -u ${SERVICE_NAME} -f"
+    fi
 else
-    echo "⚠ Le service n'a pas démarré correctement. Vérifiez avec:"
-    echo "  sudo journalctl -u ${SERVICE_NAME} -f"
+    # Pas de systemd (conteneur) — utiliser rc.local
+    echo "⚠ systemd non disponible, utilisation de /etc/rc.local"
+    RC_LINE="$SCRIPT_DIR/venv/bin/python3 $SCRIPT_DIR/monitor.py >> $SCRIPT_DIR/monitor.log 2>&1 &"
+    if [ ! -f /etc/rc.local ]; then
+        printf '#!/bin/bash\n%s\nexit 0\n' "$RC_LINE" > /etc/rc.local
+    elif ! grep -qF "monitor.py" /etc/rc.local; then
+        sed -i "s|^exit 0|${RC_LINE}\nexit 0|" /etc/rc.local
+    fi
+    chmod +x /etc/rc.local
+    echo "✓ Démarrage automatique configuré via /etc/rc.local"
+
+    # 6. Démarrer le service maintenant
+    echo ""
+    echo "→ Démarrage du service..."
+    pkill -f "monitor.py" 2>/dev/null || true
+    sleep 1
+    $SCRIPT_DIR/venv/bin/python3 $SCRIPT_DIR/monitor.py >> $SCRIPT_DIR/monitor.log 2>&1 &
+    sleep 2
+    if pgrep -f "monitor.py" > /dev/null; then
+        echo "✓ Service démarré avec succès"
+    else
+        echo "⚠ Le service n'a pas démarré. Vérifiez avec:"
+        echo "  tail -f $SCRIPT_DIR/monitor.log"
+    fi
 fi
 
 # 7. Afficher l'URL d'accès

@@ -912,6 +912,7 @@ The script performs in order:
 
 | Version | Highlights |
 |---|---|
+| **1.1.7** | Pagination de l'historique des coupures (5/10/25/50 par page, navigation Précédent/Suivant, indicateur de page) ; script d'installation compatible conteneurs sans systemd (fallback automatique vers `/etc/rc.local`) |
 | **1.1.6** | Fix in-app update — Python dependencies (`pip install -r requirements.txt`) are now automatically installed after download, preventing service crash on restart if new packages are required; improved systemd restart robustness (tries multiple service name variants, explicit log if systemd unavailable) |
 | **1.1.5** | Login countdown on rate-limit lockout (button disabled, seconds countdown, auto-re-enable) ; critical SMTP fix — password was not decrypted before sending (Fernet), blocking all emails (alerts, OTP recovery, test email) ; Freebox Ultra support — sensors and fans now dynamically detected from the API (no more hardcoded IDs), sensor grid adapts to all Freebox models |
 | **1.1.4** | Fix monthly report — CSS blocked by CSP (added nonce on `<style>` and `<script>`), wrong logo replaced with Freebox SVG, `print-color-adjust:exact` for calendar colors when printing, print button migrated to `addEventListener` |

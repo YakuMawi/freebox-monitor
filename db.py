@@ -306,8 +306,9 @@ def close_outage(ts: int):
     return None
 
 
-def get_outages(limit: int = 50, offset: int = 0) -> list:
+def get_outages(limit: int = 50, offset: int = 0) -> dict:
     with _conn() as c:
+        total = c.execute("SELECT COUNT(*) FROM outages").fetchone()[0]
         rows = c.execute(
             "SELECT * FROM outages ORDER BY started_at DESC LIMIT ? OFFSET ?",
             (limit, offset)
@@ -321,7 +322,7 @@ def get_outages(limit: int = 50, offset: int = 0) -> list:
         d["is_test"]       = int(d.get("is_test") or 0)
         d["note"]          = d.get("note") or ""
         result.append(d)
-    return result
+    return {"items": result, "total": total}
 
 
 def get_config(key: str, default=None):
