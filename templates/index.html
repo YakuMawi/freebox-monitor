@@ -745,6 +745,70 @@ header{display:flex;align-items:center;justify-content:space-between;
   </div>
 </div>
 
+<!-- ═══════════════════════════════════════════
+     MODAL MISE À JOUR
+     Doit rester AVANT le <script> ci-dessous : le bloc de bindings
+     (_bind('upd-apply-btn'…), _bind('upd-dismiss-btn'…)) et le handler
+     querySelectorAll('.modal-backdrop') s'exécutent de façon synchrone
+     pendant le parsing. Placé après le script, getElementById() renvoyait
+     null et _bind() ignorait silencieusement l'élément : les boutons
+     « Mettre à jour » / « Plus tard » du popup n'avaient aucun listener
+     (et la CSP interdit onclick inline, donc aucun repli possible).
+═══════════════════════════════════════════ -->
+<div class="modal-backdrop" id="update-modal">
+  <div class="modal">
+    <div class="upd-header">
+      <span class="upd-bell">🔔</span>
+      <div>
+        <div class="upd-title">Mise à jour disponible</div>
+        <div class="upd-subtitle">Une nouvelle version de Freebox Monitor est disponible.</div>
+      </div>
+    </div>
+    <div class="upd-version">
+      <div class="upd-ver-block">
+        <div class="upd-ver-label">Installée</div>
+        <div class="upd-ver-num old" id="upd-current">—</div>
+      </div>
+      <div class="upd-arrow">→</div>
+      <div class="upd-ver-block">
+        <div class="upd-ver-label">Disponible</div>
+        <div class="upd-ver-num new" id="upd-latest">—</div>
+      </div>
+    </div>
+    <div class="upd-changelog-label">Notes de version</div>
+    <pre class="upd-changelog" id="upd-changelog">Chargement…</pre>
+    <div class="upd-actions">
+      <span class="upd-status" id="upd-status"></span>
+      <button class="btn" id="upd-dismiss-btn">Plus tard</button>
+      <button class="btn btn-primary" id="upd-apply-btn">Mettre à jour</button>
+    </div>
+  </div>
+</div>
+
+<!-- BARRE DE NAVIGATION MOBILE (visible uniquement sur mobile ≤768px)
+     Également remontée avant le <script> : _bind('btn-report-mobile'…),
+     _bind('theme-btn-mobile'…) et initThemeIcon() (#theme-icon-mobile)
+     échouaient silencieusement pour la même raison. .mobile-nav est en
+     position:fixed/z-index:90, l'ordre DOM n'a aucun effet visuel. -->
+<nav class="mobile-nav">
+  <a href="/settings" class="mobile-nav-item">
+    <span class="mobile-nav-icon">⚙️</span>
+    <span>Paramètres</span>
+  </a>
+  <button class="mobile-nav-item" id="btn-report-mobile">
+    <span class="mobile-nav-icon">📄</span>
+    <span>Rapport</span>
+  </button>
+  <button class="mobile-nav-item" id="theme-btn-mobile">
+    <span class="mobile-nav-icon" id="theme-icon-mobile">☀️</span>
+    <span>Thème</span>
+  </button>
+  <a href="/logout" class="mobile-nav-item nav-danger">
+    <span class="mobile-nav-icon">⏻</span>
+    <span>Déco.</span>
+  </a>
+</nav>
+
 <script nonce="{{ g.csp_nonce }}">
 // ─────────────────────────────────────────
 // Tile system
@@ -1651,6 +1715,27 @@ async function checkUpdatePopup(){
     document.getElementById('update-modal').classList.add('open');
   }catch(e){ console.error('checkUpdate',e); }
 }
+// Attend le retour du service après un redémarrage, puis recharge la page.
+// prevVer = version AVANT la mise à jour : on ne recharge que si la version a
+// changé ou si on a vu le service tomber. Recharger dès la première réponse
+// renverrait l'ancien processus (code Python et templates encore en cache),
+// donnant l'impression que la mise à jour n'a rien fait.
+function _waitForRestart(status, prevVer){
+  let wentDown=false, attempts=0;
+  const poll=async()=>{
+    try{
+      const r=await fetch('/api/version',{cache:'no-store'});
+      if(r.ok){
+        const d=await r.json();
+        if(wentDown || ('v'+(d.version||''))!==prevVer){ location.reload(); return; }
+      }else{ wentDown=true; }
+    }catch(e){ wentDown=true; }
+    attempts++;
+    if(attempts<40) setTimeout(poll,1500);
+    else if(status) status.textContent='Rechargez la page manuellement.';
+  };
+  setTimeout(poll,3000);
+}
 function dismissUpdateModal(){
   sessionStorage.setItem('upd-dismissed','1');
   document.getElementById('update-modal').classList.remove('open');
@@ -1659,6 +1744,7 @@ async function applyUpdateFromModal(){
   const applyBtn=document.getElementById('upd-apply-btn');
   const dismissBtn=document.getElementById('upd-dismiss-btn');
   const status=document.getElementById('upd-status');
+  const prevVer=document.getElementById('upd-current').textContent;
   applyBtn.disabled=true;
   dismissBtn.disabled=true;
   applyBtn.textContent='Mise à jour…';
@@ -1672,9 +1758,13 @@ async function applyUpdateFromModal(){
     });
     const d=await r.json();
     if(d.ok){
-      status.textContent='✓ Installée — redémarrage dans 4s…';
+      status.textContent='✓ Installée — redémarrage en cours…';
       applyBtn.textContent='✓ Succès';
-      setTimeout(()=>location.reload(),4000);
+      // Le service est redémarré ~2 s après cette réponse. Un simple
+      // setTimeout(reload, 4000) rechargeait à l'aveugle et tombait souvent
+      // pendant la coupure (page d'erreur du navigateur). On attend que
+      // /api/version réponde à nouveau avant de recharger.
+      _waitForRestart(status, prevVer);
     }else{
       status.style.display='none';
       applyBtn.textContent='Mettre à jour';
@@ -1783,56 +1873,5 @@ function toggleTilePanel(){
 // bonnes couleurs après bascule (voir bindings plus haut).
 initThemeIcon();
 </script>
-
-<!-- MODAL MISE À JOUR -->
-<div class="modal-backdrop" id="update-modal">
-  <div class="modal">
-    <div class="upd-header">
-      <span class="upd-bell">🔔</span>
-      <div>
-        <div class="upd-title">Mise à jour disponible</div>
-        <div class="upd-subtitle">Une nouvelle version de Freebox Monitor est disponible.</div>
-      </div>
-    </div>
-    <div class="upd-version">
-      <div class="upd-ver-block">
-        <div class="upd-ver-label">Installée</div>
-        <div class="upd-ver-num old" id="upd-current">—</div>
-      </div>
-      <div class="upd-arrow">→</div>
-      <div class="upd-ver-block">
-        <div class="upd-ver-label">Disponible</div>
-        <div class="upd-ver-num new" id="upd-latest">—</div>
-      </div>
-    </div>
-    <div class="upd-changelog-label">Notes de version</div>
-    <pre class="upd-changelog" id="upd-changelog">Chargement…</pre>
-    <div class="upd-actions">
-      <span class="upd-status" id="upd-status"></span>
-      <button class="btn" id="upd-dismiss-btn">Plus tard</button>
-      <button class="btn btn-primary" id="upd-apply-btn">Mettre à jour</button>
-    </div>
-  </div>
-</div>
-
-<!-- BARRE DE NAVIGATION MOBILE (visible uniquement sur mobile ≤768px) -->
-<nav class="mobile-nav">
-  <a href="/settings" class="mobile-nav-item">
-    <span class="mobile-nav-icon">⚙️</span>
-    <span>Paramètres</span>
-  </a>
-  <button class="mobile-nav-item" id="btn-report-mobile">
-    <span class="mobile-nav-icon">📄</span>
-    <span>Rapport</span>
-  </button>
-  <button class="mobile-nav-item" id="theme-btn-mobile">
-    <span class="mobile-nav-icon" id="theme-icon-mobile">☀️</span>
-    <span>Thème</span>
-  </button>
-  <a href="/logout" class="mobile-nav-item nav-danger">
-    <span class="mobile-nav-icon">⏻</span>
-    <span>Déco.</span>
-  </a>
-</nav>
 </body>
 </html>

@@ -1322,7 +1322,13 @@ def route_update_apply():
         return jsonify({"ok": False, "msg": "Dépôt GitHub non configuré"}), 400
     ok, msg = updater.apply_update(repo, token or None, tag=tag)
     if ok:
-        _executor.submit(_restart_service)
+        # Thread dédié, PAS _executor : le pool partagé (8 workers) est occupé par
+        # _safe_check_external_ip (~8 s), _bg_ping, les _executor.map de
+        # collect_lan/collect_switch et surtout _schedule_outage_alert._delayed
+        # (30 s de sleep, un par coupure). En rafale de coupures, le redémarrage
+        # était mis en file derrière eux ; et toute exception y était noyée dans
+        # un Future jamais lu, donc invisible dans les logs.
+        threading.Thread(target=_restart_service, daemon=True).start()
     return jsonify({"ok": ok, "msg": msg})
 
 
