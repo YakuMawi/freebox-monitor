@@ -6,6 +6,7 @@
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg"/>
 <title>Paramètres — Freebox Monitor</title>
 <script nonce="{{ g.csp_nonce }}">(function(){var t=localStorage.getItem('fbx-theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>
+<script src="/static/common.js"></script>
 <style nonce="{{ g.csp_nonce }}">
 :root{--bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--text:#e2e8f0;--muted:#718096;
   --blue:#4299e1;--green:#48bb78;--red:#fc8181;--orange:#ed8936}
@@ -26,12 +27,15 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
 .tab-btn{flex:1;min-width:0;padding:10px 6px;background:transparent;border:none;color:var(--muted);
   font-size:14px;font-weight:600;cursor:pointer;border-radius:8px;transition:all .2s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tab-btn.active{background:var(--blue);color:#fff}
-.tab-btn:hover:not(.active){color:var(--text)}
+.tab-btn:hover:not(.active){color:var(--text);background:rgba(66,153,225,.08)}
+.tab-btn:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 
 .tab-content{display:none}
 .tab-content.active{display:block}
 
-.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px;
+  box-shadow:0 1px 3px rgba(0,0,0,.1),0 1px 2px rgba(0,0,0,.06)}
+[data-theme="dark"] .card{box-shadow:0 2px 8px rgba(0,0,0,.45)}
 .card-title{font-size:16px;font-weight:700;margin-bottom:16px}
 
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
@@ -50,7 +54,8 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
 .btn:hover{opacity:.9}
 .btn-primary{background:var(--blue);color:#fff}
 .btn-green{background:var(--green);color:#fff}
-.btn-red{background:var(--red);color:#fff}
+.btn-red{background:#e53e3e;color:#fff}
+[data-theme="light"] .btn-red{background:var(--red)}
 .btn-outline{background:transparent;border:1px solid var(--border);color:var(--text)}
 
 .alert{padding:10px 14px;border-radius:8px;font-size:13px;margin-top:12px;display:none}
@@ -178,9 +183,19 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
       <label class="form-check">
         <input type="checkbox" id="alerts_enabled"> Activer les alertes
       </label>
+      <label class="form-check">
+        <input type="checkbox" id="alert_ip_change"> Alerte changement d'IP publique (sans coupure)
+      </label>
       <div class="form-group" style="margin:0">
-        <label>Délai avant alerte (secondes)</label>
+        <label>Délai avant alerte coupure (secondes)</label>
         <input type="number" id="alert_outage_min_s" placeholder="30" min="5">
+      </div>
+      <div class="form-group" style="margin:12px 0 0">
+        <label>Fenêtre de fusion des reconnexions rapides (secondes)</label>
+        <input type="number" id="outage_merge_window_s" placeholder="15" min="0">
+        <small style="color:var(--muted);font-size:11px;display:block;margin-top:2px">
+          Si la connexion revient puis retombe avant ce délai, les deux coupures sont comptées comme un seul incident.
+        </small>
       </div>
     </div>
     <div style="display:flex;gap:8px">
@@ -424,7 +439,7 @@ function handleChipKeydown(e){
 async function loadSmtpConfig(){
   const r=await fetch('/api/config');
   const cfg=await r.json();
-  ['smtp_host','smtp_port','smtp_user','smtp_from','alert_outage_min_s'].forEach(k=>{
+  ['smtp_host','smtp_port','smtp_user','smtp_from','alert_outage_min_s','outage_merge_window_s'].forEach(k=>{
     const el=document.getElementById(k);
     if(el) el.value=cfg[k]||'';
   });
@@ -432,6 +447,7 @@ async function loadSmtpConfig(){
   document.getElementById('smtp_tls').checked=(cfg.smtp_tls!=='false');
   document.getElementById('smtp_ssl').checked=(cfg.smtp_ssl==='true');
   document.getElementById('alerts_enabled').checked=(cfg.alerts_enabled==='true');
+  document.getElementById('alert_ip_change').checked=(cfg.alert_ip_change!=='false');
   // Charger les destinataires en chips
   _emailList=(cfg.alert_to||'').split(',').map(e=>e.trim()).filter(Boolean);
   renderChips();
@@ -439,7 +455,7 @@ async function loadSmtpConfig(){
 
 async function saveSmtp(){
   const data={};
-  ['smtp_host','smtp_port','smtp_user','smtp_from','alert_outage_min_s'].forEach(k=>{
+  ['smtp_host','smtp_port','smtp_user','smtp_from','alert_outage_min_s','outage_merge_window_s'].forEach(k=>{
     data[k]=document.getElementById(k).value;
   });
   addChipFromInput();
@@ -449,6 +465,7 @@ async function saveSmtp(){
   data.smtp_tls=document.getElementById('smtp_tls').checked?'true':'false';
   data.smtp_ssl=document.getElementById('smtp_ssl').checked?'true':'false';
   data.alerts_enabled=document.getElementById('alerts_enabled').checked?'true':'false';
+  data.alert_ip_change=document.getElementById('alert_ip_change').checked?'true':'false';
   await fetch('/api/config',{method:'POST',headers:_ch({'Content-Type':'application/json'}),body:JSON.stringify(data)});
   showAlert('smtp-result','Configuration enregistrée','ok');
 }
@@ -682,31 +699,17 @@ async function changePassword(){
 // ─────────────────────────────────────
 // Thème
 // ─────────────────────────────────────
-function toggleTheme(){
-  const cur=document.documentElement.getAttribute('data-theme')||'dark';
-  const next=cur==='dark'?'light':'dark';
-  document.documentElement.setAttribute('data-theme',next);
-  localStorage.setItem('fbx-theme',next);
-  document.getElementById('theme-btn').textContent=next==='dark'?'☀️':'🌙';
-}
-function _initThemeBtn(){
-  const t=document.documentElement.getAttribute('data-theme')||'dark';
-  document.getElementById('theme-btn').textContent=t==='dark'?'☀️':'🌙';
-}
+// toggleTheme()/initThemeIcon() et initCsrf()/_ch() : voir static/common.js
+// (partagés avec index.html).
 
 // ─────────────────────────────────────
 // Init
 // ─────────────────────────────────────
-let _csrfToken='';
-async function initCsrf(){
-  try{ const r=await fetch('/api/csrf-token'); const d=await r.json(); _csrfToken=d.token||''; }catch(e){}
-}
-function _ch(extra){ return Object.assign({},extra,{'X-CSRF-Token':_csrfToken}); }
 
 // ─────────────────────────────────────
 // Bind all event listeners (CSP: no inline onclick allowed)
 // ─────────────────────────────────────
-document.getElementById('theme-btn').addEventListener('click', toggleTheme);
+document.getElementById('theme-btn').addEventListener('click', ()=>toggleTheme());
 ['smtp','webhooks','update','account'].forEach(name=>{
   document.getElementById('tab-btn-'+name).addEventListener('click', ()=>switchTab(name));
 });
@@ -727,7 +730,7 @@ document.getElementById('btn-apply-downgrade').addEventListener('click', applyDo
 document.getElementById('btn-save-recovery').addEventListener('click', saveRecoveryEmail);
 document.getElementById('btn-change-password').addEventListener('click', changePassword);
 
-_initThemeBtn();
+initThemeIcon();
 initCsrf().then(()=>loadSmtpConfig());
 </script>
 </body>

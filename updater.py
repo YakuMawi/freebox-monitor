@@ -2,7 +2,7 @@
 updater.py — Vérification et application des mises à jour GitHub.
 """
 import os
-import io
+import re
 import shutil
 import subprocess
 import sys
@@ -12,11 +12,33 @@ import tempfile
 
 import requests
 
+_REPO_RE = re.compile(r'^[a-zA-Z0-9_.\-]+/[a-zA-Z0-9_.\-]+$')
+_TAG_RE  = re.compile(r'^[a-zA-Z0-9_.\-]+$')
+
 log = logging.getLogger(__name__)
 
 VERSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION")
 
-EXCLUDE = {"data/", "certs/", "credentials.json", "venv/", "__pycache__/", ".claude/"}
+EXCLUDE = {"data/", "certs/", "credentials.json", "venv/", "__pycache__/", ".claude/", ".git/"}
+
+
+def parse_version(v: str) -> tuple:
+    """Convertit '1.10.0' (ou 'v1.10.0-rc1') en tuple d'entiers comparable.
+
+    Indispensable : la comparaison lexicographique de chaînes donnait
+    '1.10.0' < '1.9.0' (car '1' < '9' au 3ᵉ caractère), donc une mise à jour
+    mineure au-delà de .9 n'était jamais proposée. Les segments non numériques
+    (suffixes de pré-version) sont ignorés.
+    """
+    nums = re.findall(r'\d+', v or "")
+    return tuple(int(n) for n in nums[:4]) if nums else (0,)
+
+
+def is_newer(latest: str, current: str) -> bool:
+    """True si `latest` est strictement postérieure à `current`."""
+    a, b = parse_version(latest), parse_version(current)
+    n = max(len(a), len(b))
+    return a + (0,) * (n - len(a)) > b + (0,) * (n - len(b))
 
 
 def get_current_version() -> str:
@@ -44,7 +66,7 @@ def check_for_update(repo: str, token: str = None) -> dict:
     current = get_current_version()
 
     return {
-        "available": latest != current and latest > current,
+        "available": is_newer(latest, current),
         "current": current,
         "latest": latest,
         "tag_name": data.get("tag_name", ""),
@@ -77,6 +99,10 @@ def list_releases(repo: str, token: str = None) -> list:
 
 
 def apply_update(repo: str, token: str = None, tag: str = None) -> tuple:
+    if not _REPO_RE.match(repo):
+        return False, "Dépôt GitHub invalide"
+    if tag and not _TAG_RE.match(tag):
+        return False, "Tag de version invalide"
     if tag:
         # Version spécifique (mise à jour ou rétrogradation)
         url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
@@ -105,14 +131,23 @@ def apply_update(repo: str, token: str = None, tag: str = None) -> tuple:
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
+    project_dir = os.path.dirname(os.path.abspath(__file__))
+    backup_dir  = os.path.join(project_dir, "data", "backup_before_update")
+    applied_changes = False  # True dès que project_dir commence à être modifié
+
+    tmp_zip_fd, tmp_zip_path = tempfile.mkstemp(suffix=".zip")
+    os.close(tmp_zip_fd)
     try:
+        # Téléchargement en flux, écrit sur disque par chunks : évite de charger
+        # l'archive entière en RAM via r.content pour les gros dépôts.
         r = requests.get(download_url, headers=headers, timeout=60, stream=True)
         r.raise_for_status()
+        with open(tmp_zip_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=65536):
+                if chunk:
+                    f.write(chunk)
 
-        project_dir = os.path.dirname(os.path.abspath(__file__))
-
-        # Create backup
-        backup_dir = os.path.join(project_dir, "data", "backup_before_update")
+        # Create backup (avant toute modification de project_dir)
         if os.path.exists(backup_dir):
             shutil.rmtree(backup_dir)
         os.makedirs(backup_dir, exist_ok=True)
@@ -130,8 +165,8 @@ def apply_update(repo: str, token: str = None, tag: str = None) -> tuple:
 
         # Extract update to temp dir
         with tempfile.TemporaryDirectory() as tmp:
-            z = zipfile.ZipFile(io.BytesIO(r.content))
-            z.extractall(tmp)
+            with zipfile.ZipFile(tmp_zip_path) as z:
+                z.extractall(tmp)
 
             # GitHub zipball has a top-level directory
             entries = os.listdir(tmp)
@@ -140,7 +175,9 @@ def apply_update(repo: str, token: str = None, tag: str = None) -> tuple:
             else:
                 src_dir = tmp
 
-            # Copy files, excluding protected paths
+            # Copy files, excluding protected paths — à partir d'ici, project_dir
+            # est modifié : un échec doit restaurer la sauvegarde.
+            applied_changes = True
             for item in os.listdir(src_dir):
                 if any(item.rstrip("/") == ex.rstrip("/") for ex in EXCLUDE):
                     continue
@@ -153,7 +190,7 @@ def apply_update(repo: str, token: str = None, tag: str = None) -> tuple:
                 else:
                     shutil.copy2(src, dst)
 
-        # Mise à jour des dépendances Python
+        # Mise à jour des dépendances Python (échec non bloquant : pas de rollback)
         pip = os.path.join(project_dir, "venv", "bin", "pip")
         req = os.path.join(project_dir, "requirements.txt")
         if os.path.exists(pip) and os.path.exists(req):
@@ -174,4 +211,37 @@ def apply_update(repo: str, token: str = None, tag: str = None) -> tuple:
 
     except Exception as e:
         log.error("Erreur mise à jour: %s", e)
+        if applied_changes:
+            if _restore_backup(project_dir, backup_dir):
+                log.warning("Mise à jour échouée — restauration de la sauvegarde réussie")
+                return False, f"Mise à jour échouée (version précédente restaurée) : {e}"
+            log.error("Mise à jour échouée ET restauration de la sauvegarde impossible")
+            return False, f"Mise à jour échouée ET restauration impossible — intervention manuelle requise : {e}"
         return False, str(e)
+    finally:
+        try:
+            os.unlink(tmp_zip_path)
+        except OSError:
+            pass
+
+
+def _restore_backup(project_dir: str, backup_dir: str) -> bool:
+    """Restaure project_dir depuis backup_dir après un échec de mise à jour.
+    Retourne True si la restauration a réussi, False sinon."""
+    if not os.path.isdir(backup_dir):
+        log.error("Aucune sauvegarde disponible dans %s — restauration impossible", backup_dir)
+        return False
+    try:
+        for item in os.listdir(backup_dir):
+            src = os.path.join(backup_dir, item)
+            dst = os.path.join(project_dir, item)
+            if os.path.isdir(src):
+                if os.path.exists(dst):
+                    shutil.rmtree(dst)
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+        return True
+    except Exception as e:
+        log.error("Échec de la restauration post-échec de mise à jour: %s", e)
+        return False

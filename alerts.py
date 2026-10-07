@@ -4,7 +4,7 @@ alerts.py — Alertes SMTP & Webhooks pour Freebox Monitor.
 import json
 import logging
 import smtplib
-import threading
+import concurrent.futures
 import urllib.parse
 import urllib.request
 
@@ -15,6 +15,12 @@ from email.mime.text import MIMEText
 import crypto
 
 log = logging.getLogger(__name__)
+
+# Pool partagé et borné pour l'envoi des webhooks (jusqu'à 5 par alerte) au lieu
+# d'un threading.Thread ad-hoc par webhook et par alerte.
+_webhook_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=5, thread_name_prefix="fbxmon-webhook"
+)
 
 
 _LOGO_HTML = """
@@ -73,46 +79,61 @@ def _build_html(title: str, rows: list, color: str = "#4299e1") -> str:
 # SMTP
 # ─────────────────────────────────────
 
-def _send(config: dict, subject: str, html: str) -> tuple:
-    host     = config.get("smtp_host", "")
-    port     = int(config.get("smtp_port", 587))
-    user     = config.get("smtp_user", "")
-    password = crypto.decrypt(config.get("smtp_password", ""))
-    from_    = config.get("smtp_from", "") or user
-    to_      = config.get("alert_to", "")
-    tls      = str(config.get("smtp_tls", "true")).lower() == "true"
-    ssl      = str(config.get("smtp_ssl", "false")).lower() == "true"
+def _smtp_settings(config: dict) -> dict:
+    """Extrait et normalise les paramètres SMTP communs depuis la config."""
+    user = config.get("smtp_user", "")
+    return {
+        "host":     config.get("smtp_host", ""),
+        "port":     int(config.get("smtp_port", 587)),
+        "user":     user,
+        "password": crypto.decrypt(config.get("smtp_password", "")),
+        "from_":    config.get("smtp_from", "") or user,
+        "tls":      str(config.get("smtp_tls", "true")).lower() == "true",
+        "ssl":      str(config.get("smtp_ssl", "false")).lower() == "true",
+    }
 
-    if not host or not to_:
+
+def _smtp_deliver(settings: dict, recipients: list, subject: str, html: str,
+                   log_label: str = "SMTP") -> tuple:
+    """Connexion/TLS/login/sendmail — logique commune réutilisée par tous les
+    envois d'email (alertes et code de réinitialisation)."""
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"]    = settings["from_"]
+        msg["To"]      = ", ".join(recipients)
+        msg.attach(MIMEText(html, "html"))
+
+        if settings["ssl"]:
+            server = smtplib.SMTP_SSL(settings["host"], settings["port"], timeout=15)
+        else:
+            server = smtplib.SMTP(settings["host"], settings["port"], timeout=15)
+            if settings["tls"]:
+                server.starttls()
+
+        if settings["user"] and settings["password"]:
+            server.login(settings["user"], settings["password"])
+
+        server.sendmail(settings["from_"], recipients, msg.as_string())
+        server.quit()
+        return True, "OK"
+    except Exception as e:
+        log.error("Erreur %s: %s", log_label, e)
+        return False, "Erreur d'envoi email. Vérifiez la configuration SMTP (logs serveur pour détails)."
+
+
+def _send(config: dict, subject: str, html: str) -> tuple:
+    settings = _smtp_settings(config)
+    to_ = config.get("alert_to", "")
+
+    if not settings["host"] or not to_:
         return False, "SMTP non configuré (host ou destinataire manquant)"
 
     recipients = [r.strip() for r in to_.split(",") if r.strip()]
     if not recipients:
         return False, "Aucun destinataire valide"
 
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"]    = from_
-        msg["To"]      = ", ".join(recipients)
-        msg.attach(MIMEText(html, "html"))
-
-        if ssl:
-            server = smtplib.SMTP_SSL(host, port, timeout=15)
-        else:
-            server = smtplib.SMTP(host, port, timeout=15)
-            if tls:
-                server.starttls()
-
-        if user and password:
-            server.login(user, password)
-
-        server.sendmail(from_, recipients, msg.as_string())
-        server.quit()
-        return True, "OK"
-    except Exception as e:
-        log.error("Erreur SMTP: %s", e)
-        return False, "Erreur d'envoi email. Vérifiez la configuration SMTP (logs serveur pour détails)."
+    return _smtp_deliver(settings, recipients, subject, html)
 
 
 # ─────────────────────────────────────
@@ -209,39 +230,29 @@ def _send_generic(url: str, event: str, title: str, message: str) -> tuple:
 
 def _dispatch_webhooks(config: dict, event: str, title: str, message: str,
                        discord_color: int, teams_color: str):
-    """Lance tous les webhooks configurés en arrière-plan."""
+    """Lance tous les webhooks configurés en arrière-plan (pool partagé borné)."""
     if str(config.get("webhooks_enabled", "false")).lower() != "true":
         return
 
-    tasks = []
-
     url = config.get("webhook_discord", "").strip()
     if url:
-        tasks.append(threading.Thread(
-            target=_send_discord, args=(url, title, message, discord_color), daemon=True))
+        _webhook_executor.submit(_send_discord, url, title, message, discord_color)
 
     url = config.get("webhook_google_chat", "").strip()
     if url:
-        tasks.append(threading.Thread(
-            target=_send_google_chat, args=(url, title, message), daemon=True))
+        _webhook_executor.submit(_send_google_chat, url, title, message)
 
     url = config.get("webhook_teams", "").strip()
     if url:
-        tasks.append(threading.Thread(
-            target=_send_teams, args=(url, title, message, teams_color), daemon=True))
+        _webhook_executor.submit(_send_teams, url, title, message, teams_color)
 
     url = config.get("webhook_synology", "").strip()
     if url:
-        tasks.append(threading.Thread(
-            target=_send_synology, args=(url, title, message), daemon=True))
+        _webhook_executor.submit(_send_synology, url, title, message)
 
     url = config.get("webhook_generic", "").strip()
     if url:
-        tasks.append(threading.Thread(
-            target=_send_generic, args=(url, event, title, message), daemon=True))
-
-    for t in tasks:
-        t.start()
+        _webhook_executor.submit(_send_generic, url, event, title, message)
 
 
 # ─────────────────────────────────────
@@ -269,7 +280,7 @@ def send_outage_alert(config: dict, started_at: int, ipv4: str = "?") -> tuple:
 
 
 def send_recovery_alert(config: dict, started_at: int, duration_s: int, ipv4: str = "?") -> tuple:
-    from db import _fmt_dur
+    from format_utils import fmt_dur as _fmt_dur
     dt       = datetime.now()
     start_dt = datetime.fromtimestamp(started_at)
     dur_str  = _fmt_dur(duration_s)
@@ -293,17 +304,32 @@ def send_recovery_alert(config: dict, started_at: int, duration_s: int, ipv4: st
     return _send(config, subject, html)
 
 
+def send_ip_change_alert(config: dict, old_ip: str, new_ip: str) -> tuple:
+    dt    = datetime.now()
+    title = "Changement d'adresse IP publique"
+    message = (f"Date/heure : {dt.strftime('%d/%m/%Y %H:%M:%S')}\n"
+               f"Ancienne IP : {old_ip}\nNouvelle IP : {new_ip}")
+    subject = f"[Freebox] Nouvelle IP publique : {new_ip}"
+    html = _build_html(
+        title,
+        [
+            ("Date/heure",   dt.strftime("%d/%m/%Y %H:%M:%S")),
+            ("Ancienne IP",  old_ip),
+            ("Nouvelle IP",  new_ip),
+            ("Statut",       "Connexion maintenue"),
+        ],
+        color="#9f7aea"
+    )
+    _dispatch_webhooks(config, "ip_change", title, message,
+                       discord_color=10435071, teams_color="purple")
+    return _send(config, subject, html)
+
+
 def send_reset_code_email(config: dict, to_email: str, username: str, code: str) -> tuple:
     """Envoie le code OTP de réinitialisation directement à l'adresse de récupération."""
-    host     = config.get("smtp_host", "")
-    port     = int(config.get("smtp_port", 587))
-    user     = config.get("smtp_user", "")
-    password = crypto.decrypt(config.get("smtp_password", ""))
-    from_    = config.get("smtp_from", "") or user
-    tls      = str(config.get("smtp_tls", "true")).lower() == "true"
-    ssl      = str(config.get("smtp_ssl", "false")).lower() == "true"
+    settings = _smtp_settings(config)
 
-    if not host or not to_email:
+    if not settings["host"] or not to_email:
         return False, "SMTP non configuré"
 
     html = f"""<!DOCTYPE html>
@@ -335,29 +361,12 @@ def send_reset_code_email(config: dict, to_email: str, username: str, code: str)
   </div>
 </body></html>"""
 
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = "[Freebox Monitor] Code de réinitialisation de mot de passe"
-        msg["From"]    = from_
-        msg["To"]      = to_email
-        msg.attach(MIMEText(html, "html"))
-
-        if ssl:
-            server = smtplib.SMTP_SSL(host, port, timeout=15)
-        else:
-            server = smtplib.SMTP(host, port, timeout=15)
-            if tls:
-                server.starttls()
-
-        if user and password:
-            server.login(user, password)
-
-        server.sendmail(from_, [to_email], msg.as_string())
-        server.quit()
-        return True, "OK"
-    except Exception as e:
-        log.error("Erreur SMTP reset code: %s", e)
-        return False, "Erreur d'envoi email. Vérifiez la configuration SMTP (logs serveur pour détails)."
+    return _smtp_deliver(
+        settings, [to_email],
+        "[Freebox Monitor] Code de réinitialisation de mot de passe",
+        html,
+        log_label="SMTP reset code",
+    )
 
 
 def send_test_email(config: dict) -> tuple:

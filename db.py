@@ -4,17 +4,62 @@ db.py — Couche SQLite pour Freebox Monitor.
 import sqlite3
 import os
 import time
+import logging
 import threading
 from datetime import datetime, timedelta
 from calendar import monthrange
 from contextlib import contextmanager
 import crypto
+from format_utils import fmt_dur as _fmt_dur
+
+log = logging.getLogger(__name__)
 
 ENCRYPTED_KEYS = {"smtp_password", "github_token"}
+
+# Pourquoi les agrégations enveloppent certaines colonnes dans NULLIF(x, 0).
+#
+# insert_metric écrit désormais NULL (et non 0) quand une valeur est inconnue,
+# et AVG/MIN/MAX ignorent nativement les NULL. Mais les lignes déjà en base
+# contiennent des sentinelles 0 héritées, et la rétention est de 365 jours :
+# sans filtrage en lecture, les statistiques resteraient fausses pendant un an.
+# Symptôme principal : MIN(bytes_down) valait 0 sur toute période contenant une
+# coupure, donc MAX-MIN renvoyait le compteur de vie complet de la box (mesuré :
+# ~11 To affichés au lieu de ~2,3 To réels sur 30 jours).
+#
+# NULLIF est appliqué en LECTURE SEULE — la base n'est pas réécrite — et
+# uniquement là où 0 ne peut pas être une mesure valide :
+#   - bytes_down / bytes_up : compteurs cumulatifs, jamais remis à 0 hors reboot ;
+#   - temp_* : aucune box allumée ne mesure 0 °C (c'est déjà ainsi que _first()
+#     interprétait un 0 avant de l'écrire).
+# Volontairement EXCLUS du filtrage, car 0 y est une mesure légitime :
+#   - active_hosts : 0 hôte joignable est un résultat valide, et rien ne permet
+#     de le distinguer a posteriori d'un échec de collecte historique ;
+#   - rate_down / rate_up : 0 b/s = simplement aucun trafic.
+
+# Poids temporel maximum accordé à un échantillon dans le calcul de disponibilité
+# pondérée par le temps (voir _UPTIME_CTE). Si le service de monitoring a été
+# arrêté pendant des heures, l'écart entre deux échantillons consécutifs ne
+# représente pas un état "observé" : on plafonne sa contribution pour qu'un trou
+# d'observation n'écrase pas la statistique de la période.
+UPTIME_MAX_GAP_S = 300
 
 # Sérialise tous les accès DB entre threads.
 # RLock (réentrant) : un même thread peut ouvrir plusieurs _conn() imbriqués
 # (ex: prune_metrics → prune_rate_limits) sans deadlock.
+#
+# Toujours nécessaire malgré le mode WAL (voir init_db) : WAL permet à SQLite de
+# gérer nativement des lectures concurrentes pendant une écriture, ce qui suffirait
+# pour de simples requêtes indépendantes. Mais plusieurs fonctions ici (ex:
+# open_outage, is_rate_limited_db) exécutent un SELECT puis un INSERT/UPDATE comme
+# une unité logique "lire-puis-décider-puis-écrire", et WAL seul ne protège pas
+# contre une race applicative où deux threads liraient le même état avant que l'un
+# des deux écrive (ex: deux incidents ouverts en même temps, double décompte de
+# rate limit). Le lock garantit l'atomicité de ces séquences. On pourrait
+# envisager de le remplacer par un verrou plus fin (ex: lock dédié par table, ou
+# transactions SQLite explicites BEGIN IMMEDIATE) pour réduire la contention entre
+# l'écriture de la boucle de collecte et les lectures API (/api/stats), mais ce
+# n'est pas fait ici par prudence — à valider avec des tests de charge avant de
+# retirer ou d'affaiblir ce verrou.
 _db_lock = threading.RLock()
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "freebox.db")
@@ -30,6 +75,10 @@ def _migrate(c):
         c.execute("ALTER TABLE outages ADD COLUMN is_test INTEGER DEFAULT 0")
     if "note" not in cols_out:
         c.execute("ALTER TABLE outages ADD COLUMN note TEXT DEFAULT ''")
+    if "external_ip" not in cols_out:
+        c.execute("ALTER TABLE outages ADD COLUMN external_ip TEXT DEFAULT ''")
+    if "flap_count" not in cols_out:
+        c.execute("ALTER TABLE outages ADD COLUMN flap_count INTEGER DEFAULT 0")
 
 
 def init_db():
@@ -95,9 +144,17 @@ def init_db():
                 action  TEXT    NOT NULL,
                 ts      INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS ping_log (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts         INTEGER NOT NULL,
+                host       TEXT    NOT NULL,
+                latency_ms REAL,
+                lost       INTEGER DEFAULT 0
+            );
             CREATE INDEX IF NOT EXISTS idx_metrics_ts    ON metrics(ts);
             CREATE INDEX IF NOT EXISTS idx_outages_start ON outages(started_at);
             CREATE INDEX IF NOT EXISTS idx_rate_limits   ON rate_limits(action, ip, ts);
+            CREATE INDEX IF NOT EXISTS idx_ping_log_ts   ON ping_log(ts);
         """)
         _migrate(c)
 
@@ -107,6 +164,11 @@ def _conn():
     with _db_lock:
         c = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=5)
         c.row_factory = sqlite3.Row
+        # journal_mode=WAL est persistant (propriété du fichier .db, réglée une
+        # fois dans init_db), mais synchronous est un réglage par connexion : il
+        # doit être réappliqué à chaque ouverture pour rester en mode NORMAL
+        # (sinon SQLite retombe sur FULL par défaut, plus lent).
+        c.execute("PRAGMA synchronous=NORMAL")
         try:
             yield c
             c.commit()
@@ -127,13 +189,37 @@ _F_FAN0      = ["fan0_speed", "fan_speed", "fan0"]
 _F_FAN1      = ["fan1_speed", "fan1"]
 
 
-def _first(d: dict, keys: list, default=0):
-    """Retourne la première valeur non nulle parmi les clés candidates."""
+def _first(d: dict, keys: list, default=None):
+    """Retourne la première valeur renseignée parmi les clés candidates.
+
+    Un capteur absent / en erreur donne `default` (None par défaut = « valeur
+    inconnue »), ce qui est écrit NULL en base et donc ignoré par AVG/MIN/MAX.
+    Écrire 0 à la place faussait les moyennes de température (un capteur
+    manquant tirait AVG(temp_cpu_master) vers le bas).
+
+    Attention : une valeur de 0 est traitée ici comme « non renseignée » car
+    aucun capteur de température ni ventilateur de la Freebox ne remonte
+    légitimement 0 (0 °C / 0 RPM sur une box allumée = absence de capteur).
+    Ce raccourci ne s'applique PAS aux compteurs métier (hôtes LAN, débits),
+    gérés séparément via _measured().
+    """
     for k in keys:
-        v = d.get(k, 0)
+        v = d.get(k)
         if v:
             return v
     return default
+
+
+def _measured(d: dict, key: str, default=None):
+    """Valeur mesurée d'un compteur, ou `default` (None → NULL) si indisponible.
+
+    Contrairement à _first(), un 0 explicitement remonté par la box est une
+    mesure valide (0 octet transféré, 0 b/s, 0 hôte joignable) et est conservé
+    tel quel. Seule l'absence de la clé — c'est-à-dire un collecteur qui a levé
+    une exception — donne NULL.
+    """
+    v = d.get(key, default)
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else default
 
 
 def insert_metric(data: dict):
@@ -143,9 +229,9 @@ def insert_metric(data: dict):
     lan  = m.get("lan", {})
     sens = sys.get("sensors", {})
     fans = sys.get("fans", {})
-    hosts = lan.get("active_hosts", 0)
-    if not isinstance(hosts, int):
-        hosts = 0
+    # active_hosts vaut "?" quand collect_lan a échoué → NULL (inconnu).
+    # Un vrai 0 (aucun hôte joignable) reste 0 : c'est une mesure valide.
+    hosts = _measured(lan, "active_hosts")
     ts = int(datetime.now().timestamp())
     with _conn() as c:
         c.execute("""
@@ -158,9 +244,13 @@ def insert_metric(data: dict):
         """, (
             ts,
             conn.get("state", ""),
-            conn.get("rate_down", 0),    conn.get("rate_up", 0),
-            conn.get("bandwidth_down", 0), conn.get("bandwidth_up", 0),
-            conn.get("bytes_down", 0),   conn.get("bytes_up", 0),
+            # Pendant une coupure, collect_connection() lève et ces clés sont
+            # absentes : on écrit NULL (valeur inconnue) et non 0. Un 0 écrit ici
+            # cassait MAX(bytes_down)-MIN(bytes_down) (le MIN tombait à 0 et le
+            # delta devenait le compteur de vie complet de la box).
+            _measured(conn, "rate_down"),      _measured(conn, "rate_up"),
+            _measured(conn, "bandwidth_down"), _measured(conn, "bandwidth_up"),
+            _measured(conn, "bytes_down"),     _measured(conn, "bytes_up"),
             _first(sens, _S_HDD0),
             _first(sens, _S_T1),         _first(sens, _S_T2),
             _first(sens, _S_T3),
@@ -169,7 +259,7 @@ def insert_metric(data: dict):
             _first(sens, _S_CPU_SLAVE),
             _first(fans, _F_FAN0),       _first(fans, _F_FAN1),
             hosts,
-            sys.get("uptime_val", 0),
+            _measured(sys, "uptime_val"),
         ))
 
 
@@ -182,37 +272,111 @@ def get_history(seconds: int = 600) -> list:
     return [dict(r) for r in rows]
 
 
-def get_period_stats(since_ts: int) -> dict:
+# Pondération temporelle de la disponibilité.
+#
+# Historiquement uptime_pct = up_samples / samples, ce qui suppose que chaque
+# échantillon pèse la même durée. Or l'intervalle de collecte a varié (10 à 55 s
+# selon la durée du cycle, avant que la boucle ne vise un intervalle fixe), et un
+# cycle pendant une coupure est justement plus lent (timeouts HTTP) : les
+# échantillons "down" étaient donc sous-pondérés et la disponibilité surestimée.
+#
+# On pondère chaque échantillon par l'écart réel jusqu'au suivant (plafonné à
+# UPTIME_MAX_GAP_S, cf. constante). Le biais se réduit mécaniquement sur les
+# données collectées depuis le passage à un intervalle fixe, mais le calcul
+# pondéré reste nécessaire pour l'historique déjà en base, qui n'est pas
+# réécrit.
+_UPTIME_WEIGHT_SQL = """
+    SELECT
+        ts, conn_state,
+        MIN(COALESCE(LEAD(ts) OVER (ORDER BY ts), ts) - ts, {cap}) AS w
+    FROM metrics WHERE {where}
+"""
+
+
+def _uptime_pct(c, where: str, params: tuple, samples: int, up_samples: int):
+    """Disponibilité en % pondérée par le temps réel entre échantillons.
+
+    Retombe sur le ratio d'échantillons si la fenêtre ne contient pas assez de
+    points pour mesurer une durée (un seul échantillon → poids total nul)."""
+    sql = _UPTIME_WEIGHT_SQL.format(cap=UPTIME_MAX_GAP_S, where=where)
+    row = c.execute(f"""
+        WITH w AS ({sql})
+        SELECT
+            COALESCE(SUM(w), 0)                                       AS total_s,
+            COALESCE(SUM(CASE WHEN conn_state='up' THEN w ELSE 0 END), 0) AS up_s
+        FROM w
+    """, params).fetchone()
+    total_s = (row["total_s"] or 0) if row else 0
+    if total_s > 0:
+        return round((row["up_s"] or 0) / total_s * 100, 2)
+    if samples > 0:
+        return round(up_samples / samples * 100, 2)
+    return None
+
+
+def get_period_stats(since_ts: int, until_ts: int = None) -> dict:
+    metric_where = "ts >= ?" + (" AND ts < ?" if until_ts is not None else "")
+    outage_where = "started_at >= ?" + (" AND started_at < ?" if until_ts is not None else "")
+    params = (since_ts, until_ts) if until_ts is not None else (since_ts,)
     with _conn() as c:
-        row = c.execute("""
+        # Voir la note sur les sentinelles 0 en tête de module. Ne pas remettre
+        # de COALESCE(..., 0) sur ces colonnes : MIN(bytes_down) repasserait à 0.
+        row = c.execute(f"""
             SELECT
                 COUNT(*)                                           AS samples,
                 SUM(CASE WHEN conn_state='up' THEN 1 ELSE 0 END)  AS up_samples,
                 AVG(rate_down)   AS avg_down,  MAX(rate_down) AS max_down,
                 AVG(rate_up)     AS avg_up,    MAX(rate_up)   AS max_up,
                 AVG(active_hosts) AS avg_hosts, MAX(active_hosts) AS max_hosts,
-                MAX(bytes_down) - MIN(bytes_down) AS delta_bytes_down,
-                MAX(bytes_up)   - MIN(bytes_up)   AS delta_bytes_up,
-                AVG(temp_cpu_master) AS avg_temp, MAX(temp_cpu_master) AS max_temp
-            FROM metrics WHERE ts >= ?
-        """, (since_ts,)).fetchone()
-        out_row = c.execute("""
+                MAX(bytes_down) - MIN(NULLIF(bytes_down, 0)) AS delta_bytes_down,
+                MAX(bytes_up)   - MIN(NULLIF(bytes_up, 0))   AS delta_bytes_up,
+                AVG(NULLIF(temp_cpu_master, 0)) AS avg_temp,
+                MAX(NULLIF(temp_cpu_master, 0)) AS max_temp
+            FROM metrics WHERE {metric_where}
+        """, params).fetchone()
+        out_row = c.execute(f"""
             SELECT
                 SUM(CASE WHEN is_test=0 THEN 1 ELSE 0 END) AS cnt,
                 SUM(CASE WHEN is_test=1 THEN 1 ELSE 0 END) AS test_cnt,
                 COALESCE(SUM(CASE WHEN is_test=0 THEN duration_s ELSE 0 END), 0) AS total_s
             FROM outages
-            WHERE started_at >= ? AND ended_at IS NOT NULL
-        """, (since_ts,)).fetchone()
-    result = dict(row) if row else {}
+            WHERE {outage_where} AND ended_at IS NOT NULL
+        """, params).fetchone()
+        result = dict(row) if row else {}
+        result["uptime_pct"] = _uptime_pct(
+            c, metric_where, params,
+            result.get("samples") or 0, result.get("up_samples") or 0,
+        )
     result["outage_count"]      = out_row["cnt"]      if out_row else 0
     result["test_outage_count"] = out_row["test_cnt"] if out_row else 0
     result["outage_total_s"]    = out_row["total_s"]  if out_row else 0
     result["outage_total_fmt"]  = _fmt_dur(result.get("outage_total_s", 0))
-    samples = result.get("samples") or 0
-    up_s    = result.get("up_samples") or 0
-    result["uptime_pct"] = round(up_s / samples * 100, 2) if samples > 0 else None
     return result
+
+
+def _uptime_pct_by_day(c, where: str, params: tuple) -> dict:
+    """Disponibilité pondérée par le temps, par jour local. Voir _uptime_pct.
+
+    LEAD() est calculé sur toute la fenêtre (et non par jour) pour ne pas perdre
+    l'intervalle du dernier échantillon de chaque journée ; cet intervalle est
+    attribué au jour de l'échantillon courant.
+    """
+    sql = _UPTIME_WEIGHT_SQL.format(cap=UPTIME_MAX_GAP_S, where=where)
+    rows = c.execute(f"""
+        WITH w AS ({sql})
+        SELECT
+            DATE(ts, 'unixepoch', 'localtime') AS day,
+            COALESCE(SUM(w), 0)                AS total_s,
+            COALESCE(SUM(CASE WHEN conn_state='up' THEN w ELSE 0 END), 0) AS up_s
+        FROM w
+        GROUP BY DATE(ts, 'unixepoch', 'localtime')
+    """, params).fetchall()
+    out = {}
+    for r in rows:
+        total_s = r["total_s"] or 0
+        if total_s > 0:
+            out[r["day"]] = round((r["up_s"] or 0) / total_s * 100, 1)
+    return out
 
 
 def get_daily_uptime(year: int, month: int) -> dict:
@@ -230,7 +394,7 @@ def get_daily_uptime(year: int, month: int) -> dict:
                 AVG(rate_down)   AS avg_down,
                 AVG(rate_up)     AS avg_up,
                 MAX(rate_down)   AS max_down,
-                AVG(temp_cpu_master) AS avg_temp
+                AVG(NULLIF(temp_cpu_master, 0)) AS avg_temp
             FROM metrics
             WHERE ts >= ? AND ts <= ?
             GROUP BY DATE(ts, 'unixepoch', 'localtime')
@@ -245,6 +409,7 @@ def get_daily_uptime(year: int, month: int) -> dict:
             WHERE started_at >= ? AND started_at <= ? AND ended_at IS NOT NULL
             GROUP BY DATE(started_at, 'unixepoch', 'localtime')
         """, (start_ts, end_ts)).fetchall()
+        pct_by_day = _uptime_pct_by_day(c, "ts >= ? AND ts <= ?", (start_ts, end_ts))
     outage_by_day = {
         r["day"]: {"real_cnt": r["real_cnt"] or 0, "test_cnt": r["test_cnt"] or 0}
         for r in out_rows
@@ -252,7 +417,10 @@ def get_daily_uptime(year: int, month: int) -> dict:
     result = {}
     for r in rows:
         d = dict(r)
-        d["uptime_pct"] = round(d["up_cnt"] / d["total"] * 100, 1) if d["total"] > 0 else 0
+        # Pondéré par le temps ; repli sur le ratio d'échantillons si la journée
+        # ne contient pas assez de points pour mesurer une durée.
+        fallback = round(d["up_cnt"] / d["total"] * 100, 1) if d["total"] > 0 else 0
+        d["uptime_pct"] = pct_by_day.get(d["day"], fallback)
         o = outage_by_day.get(d["day"], {})
         d["real_outage_count"] = o.get("real_cnt", 0)
         d["test_outage_count"] = o.get("test_cnt", 0)
@@ -270,27 +438,52 @@ def get_daily_stats(days: int = 90) -> list:
                 SUM(CASE WHEN conn_state='up' THEN 1 ELSE 0 END) AS up_cnt,
                 AVG(rate_down) AS avg_down, MAX(rate_down) AS max_down,
                 AVG(rate_up)   AS avg_up,   MAX(rate_up)   AS max_up,
-                AVG(temp_cpu_master) AS avg_temp, MAX(temp_cpu_master) AS max_temp,
+                AVG(NULLIF(temp_cpu_master, 0)) AS avg_temp,
+                MAX(NULLIF(temp_cpu_master, 0)) AS max_temp,
                 AVG(active_hosts) AS avg_hosts
             FROM metrics WHERE ts >= ?
             GROUP BY DATE(ts, 'unixepoch', 'localtime')
             ORDER BY day DESC
         """, (since,)).fetchall()
+        pct_by_day = _uptime_pct_by_day(c, "ts >= ?", (since,))
     result = []
     for r in rows:
         d = dict(r)
-        d["uptime_pct"] = round(d["up_cnt"] / d["samples"] * 100, 1) if d["samples"] > 0 else 0
+        fallback = round(d["up_cnt"] / d["samples"] * 100, 1) if d["samples"] > 0 else 0
+        d["uptime_pct"] = pct_by_day.get(d["day"], fallback)
         result.append(d)
     return result
 
 
-def open_outage(ts: int, cause: str = "connexion perdue", is_test: int = 0) -> int:
+def open_outage(ts: int, cause: str = "connexion perdue", is_test: int = 0,
+                merge_window_s: int = 0) -> tuple:
+    """Ouvre une coupure, ou la fusionne avec le dernier incident si la connexion
+    vient de flapper (reconnexion trop brève pour être un vrai rétablissement).
+
+    Retourne (outage_id, is_new) où is_new=False signifie soit que la coupure était
+    déjà ouverte, soit que l'incident précédent a été rouvert/prolongé (fusion de flap) :
+    dans les deux cas, il ne faut pas redéclencher les effets de bord d'une "nouvelle" coupure
+    (alerte, capture IP externe).
+    """
     with _conn() as c:
         existing = c.execute("SELECT id FROM outages WHERE ended_at IS NULL").fetchone()
         if existing:
-            return existing["id"]
+            return existing["id"], False
+        if merge_window_s > 0:
+            last = c.execute(
+                "SELECT id, ended_at FROM outages WHERE ended_at IS NOT NULL "
+                "ORDER BY ended_at DESC LIMIT 1"
+            ).fetchone()
+            if last and last["ended_at"] is not None and (ts - last["ended_at"]) <= merge_window_s:
+                # Flap : on rouvre/prolonge l'incident précédent au lieu d'en créer un nouveau.
+                c.execute(
+                    "UPDATE outages SET ended_at=NULL, duration_s=NULL, "
+                    "flap_count=COALESCE(flap_count,0)+1 WHERE id=?",
+                    (last["id"],)
+                )
+                return last["id"], False
         c.execute("INSERT INTO outages(started_at, cause, is_test) VALUES(?,?,?)", (ts, cause, is_test))
-        return c.execute("SELECT last_insert_rowid()").fetchone()[0]
+        return c.execute("SELECT last_insert_rowid()").fetchone()[0], True
 
 
 def close_outage(ts: int):
@@ -321,8 +514,37 @@ def get_outages(limit: int = 50, offset: int = 0) -> dict:
         d["ended_fmt"]     = _ts_fmt(d.get("ended_at")) if d.get("ended_at") else "En cours"
         d["is_test"]       = int(d.get("is_test") or 0)
         d["note"]          = d.get("note") or ""
+        d["flap_count"]    = int(d.get("flap_count") or 0)
         result.append(d)
     return {"items": result, "total": total}
+
+
+def is_outage_open(outage_id: int) -> bool:
+    """Indique si la coupure donnée est toujours ouverte."""
+    with _conn() as c:
+        row = c.execute(
+            "SELECT ended_at FROM outages WHERE id=?", (outage_id,)
+        ).fetchone()
+    return row is not None and row["ended_at"] is None
+
+
+def get_outages_between(start_ts: int, end_ts: int) -> list:
+    """Retourne toutes les coupures ayant commencé dans l'intervalle demandé."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM outages WHERE started_at >= ? AND started_at < ? "
+            "ORDER BY started_at DESC",
+            (start_ts, end_ts),
+        ).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["duration_fmt"] = _fmt_dur(item.get("duration_s"))
+        item["started_fmt"] = _ts_fmt(item.get("started_at"))
+        item["ended_fmt"] = _ts_fmt(item.get("ended_at")) if item.get("ended_at") else "En cours"
+        item["flap_count"] = int(item.get("flap_count") or 0)
+        result.append(item)
+    return result
 
 
 def get_config(key: str, default=None):
@@ -331,6 +553,19 @@ def get_config(key: str, default=None):
     if not row:
         return default
     return crypto.decrypt(row["value"]) if row["value"] else default
+
+
+def get_config_raw(key: str, default=None):
+    """Retourne la valeur telle que stockée en base, SANS déchiffrement.
+
+    Utilisé pour détecter si un secret est déjà chiffré (préfixe 'enc:') sans
+    passer par get_config(), qui déchiffre et renverrait donc toujours une
+    valeur en clair (voir migration des secrets au démarrage dans monitor.py)."""
+    with _conn() as c:
+        row = c.execute("SELECT value FROM config WHERE key=?", (key,)).fetchone()
+    if not row or not row["value"]:
+        return default
+    return row["value"]
 
 
 def set_config(key: str, value):
@@ -343,7 +578,11 @@ def set_config(key: str, value):
 def get_all_config() -> dict:
     with _conn() as c:
         rows = c.execute("SELECT key, value FROM config").fetchall()
-    return {r["key"]: r["value"] for r in rows}
+    result = {}
+    for r in rows:
+        key, val = r["key"], r["value"]
+        result[key] = crypto.decrypt(val) if (key in ENCRYPTED_KEYS and val) else val
+    return result
 
 
 def create_user(username: str, password_hash: str):
@@ -441,8 +680,11 @@ def reset_outages_by_days(date_list: list):
                     "UPDATE outages SET is_test=1 WHERE started_at >= ? AND started_at <= ?",
                     (day_start, day_end)
                 )
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as e:
+                log.warning(
+                    "reset_outages_by_days: date ignorée %r (format attendu AAAA-MM-JJ) : %s",
+                    date_str, e
+                )
 
 
 def seed_config(defaults: dict):
@@ -454,7 +696,12 @@ def seed_config(defaults: dict):
 
 def is_rate_limited_db(ip: str, action: str, max_attempts: int, window_s: int) -> bool:
     """Vérifie si ip a dépassé max_attempts pour action dans les window_s dernières secondes.
-    Enregistre la tentative si non limitée. Retourne True si limité, False sinon."""
+
+    LECTURE SEULE : n'enregistre plus la tentative. L'appelant doit appeler
+    record_failed_attempt() uniquement en cas d'ÉCHEC d'authentification.
+    Auparavant, chaque POST (y compris les connexions réussies) consommait un
+    jeton, si bien que 5 connexions légitimes successives bloquaient la 6ᵉ.
+    """
     now = int(time.time())
     since = now - window_s
     with _conn() as c:
@@ -462,13 +709,22 @@ def is_rate_limited_db(ip: str, action: str, max_attempts: int, window_s: int) -
             "SELECT COUNT(*) FROM rate_limits WHERE ip=? AND action=? AND ts>=?",
             (ip, action, since)
         ).fetchone()[0]
-        if count >= max_attempts:
-            return True
+    return count >= max_attempts
+
+
+def record_failed_attempt(ip: str, action: str):
+    """Comptabilise une tentative échouée pour (ip, action) dans le rate limiting."""
+    with _conn() as c:
         c.execute(
             "INSERT INTO rate_limits(ip, action, ts) VALUES(?,?,?)",
-            (ip, action, now)
+            (ip, action, int(time.time()))
         )
-    return False
+
+
+def clear_rate_limit(ip: str, action: str):
+    """Remet le compteur à zéro après un succès (connexion/réinitialisation réussie)."""
+    with _conn() as c:
+        c.execute("DELETE FROM rate_limits WHERE ip=? AND action=?", (ip, action))
 
 
 def rate_limit_retry_after(ip: str, action: str, max_attempts: int, window_s: int) -> int:
@@ -503,23 +759,35 @@ def prune_metrics(keep_days: int = 365) -> int:
     with _conn() as c:
         c.execute("DELETE FROM metrics WHERE ts < ?", (cutoff,))
         c.execute("DELETE FROM rate_limits WHERE ts < ?", (rate_cutoff,))
+        c.execute("DELETE FROM ping_log WHERE ts < ?", (cutoff,))
         return c.execute("SELECT changes()").fetchone()[0]
 
 
-def _fmt_dur(secs) -> str:
-    if not secs:
-        return "—"
-    secs = int(secs)
-    m, s = divmod(secs, 60)
-    h, m = divmod(m, 60)
-    d, h = divmod(h, 24)
-    if d:
-        return f"{d}j {h}h{m:02d}m"
-    if h:
-        return f"{h}h{m:02d}m{s:02d}s"
-    if m:
-        return f"{m}m{s:02d}s"
-    return f"{s}s"
+def insert_ping_log(ts: int, host: str, latency_ms, lost: int):
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO ping_log(ts, host, latency_ms, lost) VALUES(?,?,?,?)",
+            (ts, host, latency_ms, lost)
+        )
+
+
+def get_ping_history(seconds: int = 1800) -> list:
+    since = int((datetime.now() - timedelta(seconds=seconds)).timestamp())
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT ts, host, latency_ms, lost FROM ping_log WHERE ts >= ? ORDER BY ts ASC",
+            (since,)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def set_outage_external_ip(outage_id: int, ip: str):
+    with _conn() as c:
+        c.execute("UPDATE outages SET external_ip=? WHERE id=?", (ip, outage_id))
+
+
+# _fmt_dur est désormais importé depuis format_utils (voir en-tête du fichier) —
+# conservé sous ce nom pour ne pas changer tous les appels existants.
 
 
 def _ts_fmt(ts) -> str:

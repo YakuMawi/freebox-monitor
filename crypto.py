@@ -6,7 +6,10 @@ La clé maître est cherchée dans cet ordre :
   3. Génération automatique au premier démarrage → stocké dans data/.secret_key
 """
 import os
+import logging
 from cryptography.fernet import Fernet
+
+log = logging.getLogger(__name__)
 
 KEY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", ".secret_key")
 _FERNET = None
@@ -56,8 +59,18 @@ def decrypt(value: str) -> str:
     f = _load_or_create_key()
     try:
         return f.decrypt(value[len(PREFIX):].encode()).decode()
-    except Exception:
-        return ""  # token corrompu ou mauvaise clé
+    except Exception as e:
+        # Token corrompu ou clé maître différente (data/.secret_key régénéré,
+        # FBX_MASTER_KEY changée…). Renvoyer "" en silence rendait l'envoi
+        # d'emails SMTP muet et indébogable : on trace sans jamais logger le
+        # token ni la valeur déchiffrée.
+        log.error(
+            "Échec de déchiffrement d'un secret (%s) — clé maître différente ou "
+            "valeur corrompue ; la valeur est traitée comme vide. "
+            "Ressaisissez le secret concerné dans les réglages.",
+            type(e).__name__
+        )
+        return ""
 
 
 def is_encrypted(value: str) -> bool:

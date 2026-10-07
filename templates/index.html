@@ -7,6 +7,7 @@
 <title>Freebox Monitor</title>
 <script nonce="{{ g.csp_nonce }}">(function(){var t=localStorage.getItem('fbx-theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>
 <script src="/static/chart.umd.min.js"></script>
+<script src="/static/common.js"></script>
 <style nonce="{{ g.csp_nonce }}">
 :root{
   --bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--text:#e2e8f0;--muted:#718096;
@@ -21,6 +22,7 @@
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;padding:16px}
 a{color:var(--blue);text-decoration:none}
+a:hover{opacity:.8}
 
 /* Header */
 header{display:flex;align-items:center;justify-content:space-between;
@@ -31,7 +33,7 @@ header{display:flex;align-items:center;justify-content:space-between;
 .h-title{font-size:18px;font-weight:700}
 .h-sub{font-size:12px;color:var(--muted);margin-top:2px}
 .h-center{text-align:center}
-#live-date{font-size:13px;font-weight:600;color:var(--text)}
+#live-date{font-size:13px;font-weight:600;color:var(--text);letter-spacing:.5px}
 #live-time{font-size:26px;font-weight:700;color:var(--blue);letter-spacing:2px;margin-top:2px}
 .h-right{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
 .status-pill{display:flex;align-items:center;gap:6px;
@@ -40,6 +42,7 @@ header{display:flex;align-items:center;justify-content:space-between;
 .status-pill.offline{background:rgba(252,129,129,.15);color:var(--red)}
 .status-dot{width:8px;height:8px;border-radius:50%;background:currentColor}
 .status-pill.online .status-dot{box-shadow:0 0 6px var(--green)}
+.status-pill.offline .status-dot{box-shadow:0 0 6px var(--red)}
 #last-update{font-size:11px;color:var(--muted)}
 
 /* Toolbar */
@@ -47,9 +50,11 @@ header{display:flex;align-items:center;justify-content:space-between;
 .btn{padding:6px 14px;border-radius:8px;border:1px solid var(--border);background:var(--card);
   color:var(--text);font-size:12px;font-weight:600;cursor:pointer;transition:all .2s}
 .btn:hover{background:var(--border)}
+.btn:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 .btn-primary{background:var(--blue);border-color:var(--blue);color:#fff}
 .btn-primary:hover{opacity:.85}
 .btn-danger{background:rgba(252,129,129,.15);border-color:var(--red);color:var(--red)}
+.btn-danger:hover{background:rgba(252,129,129,.3)}
 
 /* Tiles */
 .grid{display:grid;row-gap:14px;column-gap:14px}
@@ -61,7 +66,9 @@ header{display:flex;align-items:center;justify-content:space-between;
 /* Espacement vertical entre sections de tuiles */
 .tile-section{margin-bottom:14px;transition:opacity .3s}
 
-.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;
+  box-shadow:0 1px 3px rgba(0,0,0,.1),0 1px 2px rgba(0,0,0,.06)}
+[data-theme="dark"] .card{box-shadow:0 2px 8px rgba(0,0,0,.45)}
 .card-title{font-size:11px;font-weight:600;text-transform:uppercase;
   letter-spacing:.08em;color:var(--muted);margin-bottom:12px}
 
@@ -72,7 +79,7 @@ header{display:flex;align-items:center;justify-content:space-between;
 .metric-sub{font-size:11px;color:var(--muted);margin-top:2px}
 
 /* Progress bar */
-.pb{height:5px;background:var(--border);border-radius:3px;margin-top:8px;overflow:hidden}
+.pb{height:6px;background:var(--border);border-radius:3px;margin-top:8px;overflow:hidden}
 .pb-fill{height:100%;border-radius:3px;transition:width .5s}
 
 /* Info rows */
@@ -91,6 +98,8 @@ header{display:flex;align-items:center;justify-content:space-between;
 
 /* Charts */
 .chart-wrap{position:relative;height:200px}
+@media(max-width:520px){.chart-wrap{height:160px}}
+@media(min-width:1400px){.chart-wrap{height:250px}}
 
 /* Sensor grid */
 .sensor-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:4px}
@@ -106,7 +115,7 @@ header{display:flex;align-items:center;justify-content:space-between;
 
 /* Calendar */
 #calendar-nav{display:flex;align-items:center;gap:12px;margin-bottom:12px}
-#cal-month-label{font-weight:700;min-width:140px;text-align:center}
+#cal-month-label{font-weight:700;flex:1;text-align:center}
 .cal-table{width:100%;border-collapse:separate;border-spacing:3px}
 .cal-table th{font-size:11px;color:var(--muted);text-align:center;padding:4px}
 .cal-table td{text-align:center;border-radius:6px;padding:0;cursor:default;
@@ -120,12 +129,16 @@ header{display:flex;align-items:center;justify-content:space-between;
 /* Tabs */
 .tab-bar{display:flex;gap:4px;margin-bottom:14px;flex-wrap:wrap}
 .tab-btn{padding:5px 14px;border-radius:6px;border:1px solid var(--border);
-  background:transparent;color:var(--muted);font-size:12px;cursor:pointer}
+  background:transparent;color:var(--muted);font-size:12px;cursor:pointer;
+  transition:background .15s,color .15s}
 .tab-btn.active{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:600}
+.tab-btn:hover:not(.active){background:rgba(66,153,225,.08);color:var(--text)}
+.tab-btn:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 
 /* Stats table */
 .stats-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-.stat-box{background:rgba(255,255,255,.03);border-radius:8px;padding:12px;text-align:center}
+.stat-box{background:var(--bg);border-radius:8px;padding:12px;text-align:center}
+[data-theme="dark"] .stat-box{background:rgba(255,255,255,.03)}
 .stat-box .val{font-size:20px;font-weight:700;color:var(--blue)}
 .stat-box .lbl{font-size:11px;color:var(--muted);margin-top:4px}
 
@@ -138,7 +151,7 @@ header{display:flex;align-items:center;justify-content:space-between;
 .dot-gray{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--muted);margin-right:4px}
 
 /* Storage bar */
-.storage-bar{height:8px;background:var(--border);border-radius:4px;overflow:hidden;margin-top:4px}
+.storage-bar{height:6px;background:var(--border);border-radius:4px;overflow:hidden;margin-top:4px}
 .storage-fill{height:100%;border-radius:4px;transition:width .5s}
 
 /* Modal */
@@ -173,9 +186,9 @@ header{display:flex;align-items:center;justify-content:space-between;
   color:var(--red);padding:10px 16px;border-radius:8px;margin-bottom:14px;font-size:13px}
 
 /* Test mode banner */
-#test-mode-banner{display:none;background:rgba(237,137,54,.12);border:1px solid var(--orange);
+#test-mode-banner{background:rgba(237,137,54,.12);border:1px solid var(--orange);
   color:var(--orange);padding:10px 16px;border-radius:8px;margin-bottom:14px;font-size:13px;
-  display:flex;align-items:center;justify-content:space-between;gap:12px}
+  align-items:center;justify-content:space-between;gap:12px}
 #test-mode-banner.active{display:flex}
 #test-mode-banner.inactive{display:none}
 
@@ -188,6 +201,30 @@ header{display:flex;align-items:center;justify-content:space-between;
   background:rgba(252,129,129,.15);color:var(--red);cursor:pointer;user-select:none}
 .badge-test-outage{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;
   background:rgba(66,153,225,.15);color:var(--blue);cursor:pointer;user-select:none}
+
+/* IP Monitor tile */
+.ip-monitor{display:grid;grid-template-columns:1fr auto 1fr;gap:16px;align-items:center}
+@media(max-width:640px){.ip-monitor{grid-template-columns:1fr;}.ip-sep{display:none}}
+.ip-block{background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:16px 20px;position:relative;transition:border-color .3s}
+.ip-block.active{border-color:var(--blue)}
+.ip-block-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.ip-block-label .ip-dot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex-shrink:0}
+.ip-block.active .ip-dot{background:var(--blue);box-shadow:0 0 5px var(--blue)}
+.ip-addr{font-size:22px;font-weight:700;font-family:'Segoe UI',system-ui,monospace;letter-spacing:.5px;word-break:break-all;line-height:1.2}
+.ip-source{font-size:11px;color:var(--muted);margin-top:6px}
+.ip-sep{display:flex;flex-direction:column;align-items:center;gap:6px;flex-shrink:0}
+.ip-sep-line{width:1px;height:28px;background:var(--border)}
+.ip-sep-icon{font-size:18px;color:var(--muted)}
+.ip-status{display:flex;align-items:center;gap:8px;margin-top:14px;padding:10px 14px;
+  border-radius:8px;font-size:12px;font-weight:600}
+.ip-status.same{background:rgba(72,187,120,.12);color:var(--green)}
+.ip-status.diff{background:rgba(237,137,54,.12);color:var(--orange)}
+.ip-status.unknown{background:rgba(113,128,150,.1);color:var(--muted)}
+.ip-footer{display:flex;align-items:center;justify-content:space-between;margin-top:12px;flex-wrap:wrap;gap:8px}
+.ip-checked{font-size:11px;color:var(--muted)}
+.btn-refresh{display:flex;align-items:center;gap:5px;padding:5px 12px;font-size:12px}
+.btn-refresh .spin{display:inline-block;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 
 /* Inline note input */
 .note-cell{font-size:12px;color:var(--muted);max-width:160px}
@@ -245,8 +282,10 @@ header{display:flex;align-items:center;justify-content:space-between;
   #tile-selector{flex-wrap:wrap;padding:12px}
   /* Onglets scrollables */
   .tab-bar{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;
-    scrollbar-width:none;padding-bottom:2px}
+    scrollbar-width:none;padding-bottom:2px;position:relative}
   .tab-bar::-webkit-scrollbar{display:none}
+  .tab-bar::after{content:'';position:absolute;right:0;top:0;bottom:0;width:24px;
+    background:linear-gradient(to left,var(--bg),transparent);pointer-events:none}
   .tab-btn{white-space:nowrap;min-height:40px;padding:8px 14px}
   /* Zones de touch plus grandes */
   .btn{min-height:40px;white-space:nowrap}
@@ -281,7 +320,7 @@ header{display:flex;align-items:center;justify-content:space-between;
   letter-spacing:.08em;color:var(--muted);margin-bottom:6px}
 #update-modal .upd-changelog{background:rgba(0,0,0,.12);border-radius:8px;padding:12px;
   font-size:12px;color:var(--text);max-height:160px;overflow-y:auto;
-  white-space:pre-wrap;margin-bottom:20px;font-family:monospace;line-height:1.5}
+  white-space:pre-wrap;margin-bottom:20px;font-family:inherit;line-height:1.5}
 [data-theme="light"] #update-modal .upd-changelog{background:rgba(0,0,0,.05)}
 #update-modal .upd-actions{display:flex;gap:10px;justify-content:flex-end}
 #update-modal .upd-status{font-size:12px;color:var(--muted);margin-right:auto;
@@ -295,7 +334,7 @@ header{display:flex;align-items:center;justify-content:space-between;
   <div class="h-left">
     <div class="h-logo">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="40" height="40">
-        <rect width="40" height="40" rx="8" fill="#1a1a2e"/>
+        <rect width="40" height="40" rx="8" style="fill:var(--card)"/>
         <text x="6" y="31" font-family="Arial Black, sans-serif" font-weight="900" font-size="30" fill="#e94560">F</text>
         <circle cx="33" cy="9" r="2.5" fill="#e94560" opacity="0.4"/>
         <circle cx="33" cy="17" r="2.5" fill="#e94560" opacity="0.65"/>
@@ -324,7 +363,7 @@ header{display:flex;align-items:center;justify-content:space-between;
       <a href="/settings" class="btn btn-primary" style="text-decoration:none">⚙ Paramètres</a>
       <button class="btn" id="btn-report">📄 Rapport</button>
       <button class="btn" id="theme-btn">☀️</button>
-      <a href="/logout" class="btn" style="text-decoration:none;background:var(--red);color:#fff">⏻ Déconnexion</a>
+      <a href="/logout" class="btn" style="text-decoration:none;border-color:var(--red);color:var(--red)">⏻ Déconnexion</a>
     </div>
   </div>
 </header>
@@ -404,6 +443,50 @@ header{display:flex;align-items:center;justify-content:space-between;
 </div>
 
 <!-- ═══════════════════════════════════════════
+     IP MONITOR
+═══════════════════════════════════════════ -->
+<div class="tile-section card" id="tile-ip">
+  <div class="card-title">🌐 Adresses IP publiques</div>
+  <div class="ip-monitor">
+
+    <div class="ip-block" id="ip-block-freebox">
+      <div class="ip-block-label">
+        <span class="ip-dot"></span>
+        IP Freebox (opérateur)
+      </div>
+      <div class="ip-addr" id="ip-freebox-addr">—</div>
+      <div class="ip-source">Rapportée par l'API Freebox</div>
+    </div>
+
+    <div class="ip-sep">
+      <div class="ip-sep-line"></div>
+      <div class="ip-sep-icon">⇄</div>
+      <div class="ip-sep-line"></div>
+    </div>
+
+    <div class="ip-block" id="ip-block-wan">
+      <div class="ip-block-label">
+        <span class="ip-dot"></span>
+        IP de sortie du serveur (internet)
+      </div>
+      <div class="ip-addr" id="ip-wan-addr">—</div>
+      <div class="ip-source">Mesurée par le serveur via <span style="color:var(--blue)">api.ipify.org</span></div>
+    </div>
+
+  </div>
+
+  <div class="ip-status unknown" id="ip-status-bar">
+    <span id="ip-status-icon">⋯</span>
+    <span id="ip-status-text">Chargement...</span>
+  </div>
+
+  <div class="ip-footer">
+    <span class="ip-checked">Dernière vérification : <span id="ip-checked-at">—</span></span>
+    <button class="btn btn-refresh" id="btn-ip-refresh">↻ Actualiser</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
      CHARTS
 ═══════════════════════════════════════════ -->
 <div class="tile-section grid g2" id="tile-charts">
@@ -461,7 +544,8 @@ header{display:flex;align-items:center;justify-content:space-between;
     <div class="card-title">Connexion</div>
     <div class="info-row"><span class="info-key">Statut</span><span class="info-val" id="conn-state">—</span></div>
     <div class="info-row"><span class="info-key">Type / Média</span><span class="info-val" id="conn-type">—</span></div>
-    <div class="info-row"><span class="info-key">IPv4</span><span class="info-val" id="conn-ipv4">—</span></div>
+    <div class="info-row"><span class="info-key">IPv4 Freebox</span><span class="info-val" id="conn-ipv4">—</span></div>
+    <div class="info-row"><span class="info-key">IP publique réelle</span><span class="info-val" id="conn-ext-ip" title="IP vue depuis internet (via ipify)">—</span></div>
     <div class="info-row"><span class="info-key">IPv6</span><span class="info-val" id="conn-ipv6" style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis">—</span></div>
     <div class="info-row"><span class="info-key">Bande passante ↓</span><span class="info-val" id="conn-bw-d">—</span></div>
     <div class="info-row"><span class="info-key">Bande passante ↑</span><span class="info-val" id="conn-bw-u">—</span></div>
@@ -542,6 +626,61 @@ header{display:flex;align-items:center;justify-content:space-between;
 </div>
 
 <!-- ═══════════════════════════════════════════
+     PING
+═══════════════════════════════════════════ -->
+<div class="tile-section card" id="tile-ping">
+  <div class="card-title">Ping</div>
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+    <input type="text" id="ping-target-input"
+      placeholder="ex: mafreebox.freebox.fr ou 192.168.1.1"
+      style="flex:1;min-width:180px;padding:6px 10px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;outline:none">
+    <button class="btn btn-primary" id="btn-ping">Ping</button>
+    <button class="btn" id="btn-ping-save" title="Sauvegarder la cible par défaut">Sauvegarder</button>
+  </div>
+  <div id="ping-loading" style="display:none;color:var(--muted);font-size:13px;padding:4px 0">Ping en cours…</div>
+  <div id="ping-error"   style="display:none;color:var(--red);font-size:13px;padding:4px 0"></div>
+  <div id="ping-result"  style="display:none">
+    <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+      <div id="ping-status-badge"></div>
+      <span style="font-size:13px;color:var(--muted)">Cible&nbsp;: <strong id="ping-target-display">—</strong></span>
+      <span style="font-size:13px;color:var(--muted)">Perte de paquets&nbsp;: <strong id="ping-loss">—</strong></span>
+    </div>
+    <div class="grid g3" style="gap:8px">
+      <div class="card" style="padding:12px;text-align:center">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Min</div>
+        <div id="ping-min" style="font-size:22px;font-weight:700;color:var(--green)">—</div>
+        <div style="font-size:11px;color:var(--muted)">ms</div>
+      </div>
+      <div class="card" style="padding:12px;text-align:center">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Moyenne</div>
+        <div id="ping-avg" style="font-size:22px;font-weight:700;color:var(--blue)">—</div>
+        <div style="font-size:11px;color:var(--muted)">ms</div>
+      </div>
+      <div class="card" style="padding:12px;text-align:center">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Max</div>
+        <div id="ping-max" style="font-size:22px;font-weight:700;color:var(--orange)">—</div>
+        <div style="font-size:11px;color:var(--muted)">ms</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Historique automatique -->
+  <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px">
+      <span class="card-title" style="margin:0">Historique automatique (8.8.8.8)</span>
+      <select id="ping-history-window" style="padding:4px 8px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;cursor:pointer">
+        <option value="600">10 min</option>
+        <option value="1800" selected>30 min</option>
+        <option value="3600">1 heure</option>
+        <option value="21600">6 heures</option>
+      </select>
+    </div>
+    <div style="position:relative;height:130px"><canvas id="chart-ping"></canvas></div>
+    <div id="ping-history-stats" style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--muted)"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
      STOCKAGE
 ═══════════════════════════════════════════ -->
 <div class="tile-section card" id="tile-storage">
@@ -555,13 +694,13 @@ header{display:flex;align-items:center;justify-content:space-between;
 <div class="tile-section card" id="tile-outages">
   <div class="card-title">Journal des coupures</div>
   <table class="data-table">
-    <thead><tr><th>Début</th><th>Fin</th><th>Durée</th><th>Type</th><th>Cause / Note</th></tr></thead>
+    <thead><tr><th>Début</th><th>Fin</th><th>Durée</th><th>IP ext.</th><th>Type</th><th>Cause / Note</th></tr></thead>
     <tbody id="outages-body"></tbody>
   </table>
   <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
     <div style="display:flex;gap:6px;align-items:center">
       <button class="btn" id="btn-outages-prev" disabled>&#8249;</button>
-      <span id="outages-page-info" style="font-size:12px;color:var(--muted);white-space:nowrap">Page 1</span>
+      <span id="outages-page-info" style="font-size:12px;color:var(--text);font-weight:600;white-space:nowrap">Page 1</span>
       <button class="btn" id="btn-outages-next">&#8250;</button>
       <select id="outages-per-page" style="padding:4px 8px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;cursor:pointer">
         <option value="5" selected>5 / page</option>
@@ -612,12 +751,14 @@ header{display:flex;align-items:center;justify-content:space-between;
 // ─────────────────────────────────────────
 const TILES = [
   {id:'tile-kpi',      label:'KPI temps réel'},
+  {id:'tile-ip',       label:'IPs publiques'},
   {id:'tile-charts',   label:'Graphiques'},
   {id:'tile-period',   label:'Stats période'},
   {id:'tile-infos',    label:'Infos système'},
   {id:'tile-hw',       label:'Températures'},
   {id:'tile-calendar', label:'Calendrier'},
   {id:'tile-switch',   label:'Switch'},
+  {id:'tile-ping',     label:'Ping'},
   {id:'tile-storage',  label:'Stockage'},
   {id:'tile-outages',  label:'Coupures'},
 ];
@@ -750,6 +891,29 @@ const tempChart = new Chart(document.getElementById('chart-temp'),{
   options:{...cDef, scales:{...cDef.scales, y:{...cDef.scales.y, suggestedMax:90}}}
 });
 
+const pingChart = new Chart(document.getElementById('chart-ping'),{
+  type:'bar',
+  data:{labels:[],datasets:[{
+    label:'Latence (ms)',data:[],backgroundColor:[],
+    borderWidth:0,barPercentage:1,categoryPercentage:1
+  }]},
+  options:{
+    responsive:true,maintainAspectRatio:false,animation:{duration:200},
+    plugins:{legend:{display:false},tooltip:{callbacks:{
+      label:ctx=>{
+        const v=ctx.parsed.y;
+        if(v===0&&ctx.dataset.backgroundColor[ctx.dataIndex]==='#fc8181') return 'Perdu';
+        return v.toFixed(1)+' ms';
+      }
+    }}},
+    scales:{
+      x:{ticks:{color:'#718096',maxTicksLimit:8,font:{size:10}},grid:{display:false}},
+      y:{ticks:{color:'#718096',font:{size:10}},grid:{color:'#2a2d3a'},beginAtZero:true,
+         title:{display:true,text:'ms',color:'#718096',font:{size:10}}}
+    }
+  }
+});
+
 // ─────────────────────────────────────────
 // Update UI from metrics
 // ─────────────────────────────────────────
@@ -813,6 +977,7 @@ function updateUI(m){
   setHTML('conn-state', badge(conn.state==='up','Connecté',conn.state||'—'));
   setText('conn-type',    (conn.type||'—')+(conn.media?' / '+conn.media:''));
   setText('conn-ipv4',    conn.ipv4||'—');
+  setText('conn-ext-ip',  m.external_ip||'—');
   setText('conn-ipv6',    conn.ipv6||'—');
   setText('conn-bw-d',    conn.bandwidth_down_fmt||'—');
   setText('conn-bw-u',    conn.bandwidth_up_fmt||'—');
@@ -852,8 +1017,8 @@ function updateUI(m){
     sg.innerHTML = sensEntries.map(([k,v])=>{
       const label = labelMap[k] || k.replace(/^temp_/,'').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
       return `<div class="sensor-item">
-        <div class="sensor-name">${label}</div>
-        <div class="sensor-val" style="color:${tempColor(v)}">${v}°C</div>
+        <div class="sensor-name">${esc(label)}</div>
+        <div class="sensor-val" style="color:${tempColor(v)}">${esc(String(v))}°C</div>
       </div>`;
     }).join('');
   } else {
@@ -867,8 +1032,8 @@ function updateUI(m){
     fl.innerHTML = fanEntries.map(([k,v],i)=>{
       const label = 'Ventilateur '+(i+1);
       return `<div class="fan-item">
-        <div class="fan-name">💨 ${label}</div>
-        <div class="fan-val">${v?v+' RPM':'—'}</div>
+        <div class="fan-name">💨 ${esc(label)}</div>
+        <div class="fan-val">${v?esc(String(v))+' RPM':'—'}</div>
       </div>`;
     }).join('');
   } else {
@@ -887,15 +1052,19 @@ function updateCharts(rows){
     labels.push(ts.getHours().toString().padStart(2,'0')+':'+
                 ts.getMinutes().toString().padStart(2,'0')+':'+
                 ts.getSeconds().toString().padStart(2,'0'));
-    down.push(+(r.rate_down*8/1e6).toFixed(2));
-    up.push(+(r.rate_up*8/1e6).toFixed(2));
-    cpuM.push(r.temp_cpu_master||0);
-    cpuAP.push(r.temp_cpu_ap||0);
-    cpuS.push(r.temp_cpu_slave||0);
-    t1.push(r.temp_t1||0);
-    t2.push(r.temp_t2||0);
-    t3.push(r.temp_t3||0);
-    hdd.push(r.temp_hdd0||0);
+    // null en base = mesure indisponible (collecteur en erreur) : on pousse null
+    // pour laisser un trou dans la courbe, au lieu d'un 0 qui simulerait une
+    // chute de débit ou une température de 0 °C.
+    const bps=v=>v==null?null:+(v*8/1e6).toFixed(2);
+    down.push(bps(r.rate_down));
+    up.push(bps(r.rate_up));
+    cpuM.push(r.temp_cpu_master);
+    cpuAP.push(r.temp_cpu_ap);
+    cpuS.push(r.temp_cpu_slave);
+    t1.push(r.temp_t1);
+    t2.push(r.temp_t2);
+    t3.push(r.temp_t3);
+    hdd.push(r.temp_hdd0);
   });
   bwChart.data.labels=labels;
   bwChart.data.datasets[0].data=down;
@@ -1042,6 +1211,64 @@ function updateStorage(st){
 }
 
 // ─────────────────────────────────────────
+// Ping history
+// ─────────────────────────────────────────
+function updatePingHistory(rows){
+  if(!rows||!rows.length){
+    pingChart.data.labels=[];
+    pingChart.data.datasets[0].data=[];
+    pingChart.data.datasets[0].backgroundColor=[];
+    pingChart.update('none');
+    return;
+  }
+  const labels=[],heights=[],colors=[];
+  let lostCount=0;
+  const validMs=rows.filter(r=>!r.lost&&r.latency_ms!=null).map(r=>r.latency_ms);
+  const lostH=validMs.length?Math.max(Math.max(...validMs)*0.15,5):10;
+  rows.forEach(r=>{
+    const ts=new Date(r.ts*1000);
+    labels.push(ts.getHours().toString().padStart(2,'0')+':'+
+                ts.getMinutes().toString().padStart(2,'0'));
+    if(r.lost){
+      heights.push(lostH); colors.push('#fc8181'); lostCount++;
+    } else {
+      const ms=r.latency_ms||0;
+      heights.push(+ms.toFixed(1));
+      colors.push(ms<20?'#48bb78':ms<50?'#4299e1':ms<150?'#ed8936':'#fc8181');
+    }
+  });
+  pingChart.data.labels=labels;
+  pingChart.data.datasets[0].data=heights;
+  pingChart.data.datasets[0].backgroundColor=colors;
+  pingChart.update('none');
+  const total=rows.length;
+  const lostPct=total>0?(lostCount/total*100).toFixed(1):0;
+  const avgLat=validMs.length?(validMs.reduce((a,b)=>a+b,0)/validMs.length).toFixed(1):null;
+  const maxLat=validMs.length?Math.max(...validMs).toFixed(1):null;
+  const c=+lostPct>5?'var(--red)':+lostPct>1?'var(--orange)':'var(--green)';
+  const el=document.getElementById('ping-history-stats');
+  if(el) el.innerHTML=
+    `<span>Perdus: <strong style="color:${c}">${lostPct}% (${lostCount}/${total})</strong></span>`+
+    (avgLat?`<span>Moy: <strong>${avgLat} ms</strong></span>`:'')  +
+    (maxLat?`<span>Max: <strong>${maxLat} ms</strong></span>`:'')  +
+    `<span style="display:inline-flex;gap:6px;align-items:center;margin-left:4px">`+
+    `<span style="width:10px;height:10px;background:#48bb78;border-radius:2px;display:inline-block"></span>&lt;20ms `+
+    `<span style="width:10px;height:10px;background:#4299e1;border-radius:2px;display:inline-block"></span>&lt;50ms `+
+    `<span style="width:10px;height:10px;background:#ed8936;border-radius:2px;display:inline-block"></span>&lt;150ms `+
+    `<span style="width:10px;height:10px;background:#fc8181;border-radius:2px;display:inline-block"></span>perdu</span>`;
+}
+
+async function fetchPingHistory(){
+  const w=document.getElementById('ping-history-window');
+  const s=w?w.value:1800;
+  try{
+    const r=await fetch('/api/ping-history?seconds='+s);
+    const d=await r.json();
+    updatePingHistory(d);
+  }catch(e){ console.error('fetchPingHistory',e); }
+}
+
+// ─────────────────────────────────────────
 // Outages
 // ─────────────────────────────────────────
 let outagesPage=1;
@@ -1052,7 +1279,7 @@ function updateOutages(data){
   const tb=document.getElementById('outages-body');
   tb.innerHTML='';
   if(!rows.length){
-    tb.innerHTML='<tr><td colspan="5" style="color:var(--muted)">Aucune coupure enregistrée</td></tr>';
+    tb.innerHTML='<tr><td colspan="6" style="color:var(--muted)">Aucune coupure enregistrée</td></tr>';
   } else {
     rows.forEach(o=>{
       const ongoing=!o.ended_at;
@@ -1061,15 +1288,19 @@ function updateOutages(data){
         ?`<span class="badge-test-outage" title="Cliquer pour marquer comme réelle" data-outage-id="${o.id}" data-outage-toggle="false" style="cursor:pointer">🧪 Test</span>`
         :`<span class="badge-real" title="Cliquer pour marquer comme test" data-outage-id="${o.id}" data-outage-toggle="true" style="cursor:pointer">⚠️ Réelle</span>`;
       const noteHtml=`<div class="note-cell">
-        <span class="note-text" id="note-text-${o.id}" data-outage-id="${o.id}" data-outage-note="1" title="Cliquer pour modifier" style="cursor:pointer">${o.note?esc(o.note):'<span style="opacity:.4">—</span>'}</span>
+        <span class="note-text" id="note-text-${o.id}" data-outage-id="${o.id}" data-outage-note="1" data-note-val="${esc(o.note||'')}" title="Cliquer pour modifier" style="cursor:pointer">${o.note?esc(o.note):'<span style="opacity:.4">—</span>'}</span>
       </div>`;
       const causeHtml=ongoing
         ?`<span class="badge br">En cours</span>`
         :`<span style="font-size:11px;color:var(--muted)">${esc(o.cause||'')}</span>`;
+      const extIp=o.external_ip?`<span style="font-size:11px;font-family:monospace">${esc(o.external_ip)}</span>`:`<span style="color:var(--muted)">—</span>`;
+      const flapN=o.flap_count||0;
+      const flapHtml=flapN?`<span title="${flapN} reconnexion${flapN>1?'s':''} rapide${flapN>1?'s':''} fusionnée${flapN>1?'s':''} dans cet incident" style="font-size:10px;color:var(--muted);margin-left:4px">↻${flapN}</span>`:'';
       tb.innerHTML+=`<tr>
         <td>${esc(o.started_fmt||'—')}</td>
         <td>${esc(o.ended_fmt||'—')}</td>
-        <td>${esc(o.duration_fmt||'—')}</td>
+        <td>${esc(o.duration_fmt||'—')}${flapHtml}</td>
+        <td>${extIp}</td>
         <td>${badgeHtml}</td>
         <td>${causeHtml}${noteHtml}</td>
       </tr>`;
@@ -1087,12 +1318,41 @@ function toggleOutageType(id, makeTest){
   .then(()=>{ outagesPage=1; fetchOutages(); });
 }
 function editNote(id){
-  const note=prompt('Note pour cette coupure (laisser vide pour effacer) :',
-    document.getElementById('note-text-'+id)?.innerText.trim()||'');
-  if(note===null) return; // annulé
-  fetch(`/api/outages/${id}`,{method:'PATCH',headers:_ch({'Content-Type':'application/json'}),
-    body:JSON.stringify({note})})
-  .then(()=>{ outagesPage=1; fetchOutages(); });
+  const span=document.getElementById('note-text-'+id);
+  if(!span||span.querySelector('input')) return;
+  // data-note-val porte la note réelle (chaîne vide si absente). On ne lit plus
+  // innerText en repli : quand la note est vide, le span affiche le placeholder
+  // « — », qui se retrouvait pré-rempli dans le champ puis sauvegardé comme note.
+  const cur=span.dataset.noteVal||'';
+  const inp=document.createElement('input');
+  inp.value=cur;
+  inp.style.cssText='background:var(--bg);border:1px solid var(--blue);border-radius:4px;color:var(--text);font-size:12px;padding:3px 7px;width:140px;outline:none';
+  span.textContent='';
+  span.appendChild(inp);
+  inp.focus();
+  inp.select();
+  // Enter et Escape retirent tous deux le focus → un listener 'blur' nu
+  // renvoyait un second PATCH après Enter, et écrasait l'annulation après
+  // Escape. Ce drapeau garantit qu'une édition se termine exactement une fois.
+  let done=false;
+  function finish(){ if(done) return false; done=true; return true; }
+  function save(){
+    if(!finish()) return;
+    const note=inp.value.trim();
+    fetch(`/api/outages/${id}`,{method:'PATCH',headers:_ch({'Content-Type':'application/json'}),
+      body:JSON.stringify({note})})
+    .then(()=>{ outagesPage=1; fetchOutages(); })
+    .catch(e=>{ console.error('Enregistrement de la note échoué',e); fetchOutages(); });
+  }
+  function cancel(){
+    if(!finish()) return;
+    fetchOutages();   // re-rendu : l'affichage d'origine est restauré, sans PATCH
+  }
+  inp.addEventListener('keydown',e=>{
+    if(e.key==='Enter'){ e.preventDefault(); save(); }
+    else if(e.key==='Escape'){ e.preventDefault(); cancel(); }
+  });
+  inp.addEventListener('blur',save);
 }
 
 // ─────────────────────────────────────────
@@ -1125,7 +1385,7 @@ async function checkTestMode(){
     const r=await fetch('/api/test-mode');
     const d=await r.json();
     _setTestModeUI(d.active);
-  }catch(e){}
+  }catch(e){ console.error('checkTestMode',e); }
 }
 
 async function toggleTestMode(){
@@ -1135,7 +1395,7 @@ async function toggleTestMode(){
       body:JSON.stringify({active:!_testModeActive})});
     const d=await r.json();
     _setTestModeUI(d.active);
-  }catch(e){}
+  }catch(e){ console.error('toggleTestMode',e); }
 }
 
 function _setTestModeUI(active){
@@ -1163,13 +1423,8 @@ async function resetOutageDay(){
 }
 
 // ─────────────────────────────────────────
-// CSRF
+// CSRF : voir static/common.js (initCsrf/_ch partagés avec settings.html)
 // ─────────────────────────────────────────
-let _csrfToken='';
-async function initCsrf(){
-  try{ const r=await fetch('/api/csrf-token'); const d=await r.json(); _csrfToken=d.token||''; }catch(e){}
-}
-function _ch(extra){ return Object.assign({},extra,{'X-CSRF-Token':_csrfToken}); }
 
 // ─────────────────────────────────────────
 // Fetch functions
@@ -1200,6 +1455,147 @@ async function fetchSwitch(){
 async function fetchStorage(){
   const r=await fetch('/api/storage'); return r.json();
 }
+
+// ─────────────────────────────────────────
+// IP Monitor : les deux IP sont mesurées par le serveur de monitoring.
+let _ipRefreshing = false;
+let _serverWanTs = 0;
+
+function _fmtAgo(ts){
+  if(!ts) return '—';
+  const s = Math.floor(Date.now()/1000 - ts);
+  if(s < 10)  return 'à l\'instant';
+  if(s < 60)  return 'il y a '+s+' s';
+  if(s < 3600) return 'il y a '+Math.floor(s/60)+' min';
+  return 'il y a '+Math.floor(s/3600)+' h';
+}
+
+function _updateIPDisplay(fbIp, extIp){
+  const fbEl = document.getElementById('ip-freebox-addr');
+  const wnEl = document.getElementById('ip-wan-addr');
+  if(fbEl) fbEl.textContent = fbIp || '—';
+  if(wnEl) wnEl.textContent = extIp || 'Récupération...';
+
+  const fbBlk = document.getElementById('ip-block-freebox');
+  const wnBlk = document.getElementById('ip-block-wan');
+  if(fbBlk) fbBlk.classList.toggle('active', !!fbIp);
+  if(wnBlk) wnBlk.classList.toggle('active', !!extIp);
+
+  const bar  = document.getElementById('ip-status-bar');
+  const icon = document.getElementById('ip-status-icon');
+  const txt  = document.getElementById('ip-status-text');
+  if(!bar || !icon || !txt) return;
+
+  if(!fbIp || !extIp){
+    bar.className='ip-status unknown'; icon.textContent='⋯';
+    txt.textContent='Récupération des adresses IP...';
+  } else if(fbIp === extIp){
+    bar.className='ip-status same'; icon.textContent='✓';
+    txt.textContent='IPs identiques — trafic sortant directement via la Freebox';
+  } else {
+    bar.className='ip-status diff'; icon.textContent='⚠';
+    txt.textContent='IPs différentes — la machine de monitoring sort via un autre lien (5G, routeur NAT…)';
+  }
+
+  const ca = document.getElementById('ip-checked-at');
+  if(ca) ca.textContent = _fmtAgo(_serverWanTs);
+}
+
+async function fetchIPStatus(){
+  try{
+    const r = await fetch('/api/external-ip', {cache:'no-store'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const d = await r.json();
+    _serverWanTs = d.checked_at || 0;
+    _updateIPDisplay(d.freebox_ip || '', d.external_ip || '');
+  }catch(e){ console.warn('[IPMonitor] Contrôle des IP impossible', e); }
+}
+
+async function refreshExternalIP(){
+  if(_ipRefreshing) return;
+  _ipRefreshing = true;
+  const btn = document.getElementById('btn-ip-refresh');
+  if(btn) btn.innerHTML = '<span class="spin">↻</span> Actualisation...';
+  try{
+    await fetch('/api/external-ip/refresh', {method:'POST', headers:_ch({})});
+    await new Promise(resolve=>setTimeout(resolve, 1000));
+    await fetchIPStatus();
+  }finally{
+    if(btn) btn.innerHTML = '↻ Actualiser';
+    _ipRefreshing = false;
+  }
+}
+
+// ─────────────────────────────────────────
+// Ping
+// ─────────────────────────────────────────
+let _pingTarget='';
+
+async function fetchPingConfig(){
+  try{
+    const r=await fetch('/api/ping-target');
+    const d=await r.json();
+    const t=d.ping_target||'mafreebox.freebox.fr';
+    _pingTarget=t;
+    const inp=document.getElementById('ping-target-input');
+    if(inp&&!inp.value) inp.value=t;
+  }catch(e){ console.error('fetchPingConfig',e); }
+}
+
+async function doPing(showLoading){
+  const inp=document.getElementById('ping-target-input');
+  const target=(inp&&inp.value.trim())||_pingTarget||'mafreebox.freebox.fr';
+  const loadEl=document.getElementById('ping-loading');
+  const resEl=document.getElementById('ping-result');
+  const errEl=document.getElementById('ping-error');
+  if(showLoading!==false){ if(loadEl) loadEl.style.display='block'; }
+  if(resEl) resEl.style.display='none';
+  if(errEl) errEl.style.display='none';
+  try{
+    const r=await fetch('/api/ping?target='+encodeURIComponent(target));
+    const d=await r.json();
+    if(loadEl) loadEl.style.display='none';
+    if(!d.ok){ if(errEl){errEl.textContent=d.error||'Erreur';errEl.style.display='block';} return; }
+    updatePing(d);
+  }catch(e){
+    if(loadEl) loadEl.style.display='none';
+    if(errEl){errEl.textContent='Erreur réseau';errEl.style.display='block';}
+  }
+}
+
+function updatePing(d){
+  const resEl=document.getElementById('ping-result');
+  if(resEl) resEl.style.display='block';
+  const badgeEl=document.getElementById('ping-status-badge');
+  if(badgeEl) badgeEl.innerHTML=d.success
+    ?'<span class="badge bg">Accessible</span>'
+    :'<span class="badge br">Inaccessible</span>';
+  setText('ping-target-display', d.target||'—');
+  setText('ping-loss', d.packet_loss!=null?d.packet_loss+'%':'—');
+  setText('ping-min', d.latency_min!=null?d.latency_min.toFixed(1):'—');
+  setText('ping-max', d.latency_max!=null?d.latency_max.toFixed(1):'—');
+  const avgEl=document.getElementById('ping-avg');
+  if(avgEl){
+    avgEl.textContent=d.latency_avg!=null?d.latency_avg.toFixed(1):'—';
+    if(d.latency_avg!=null){
+      avgEl.style.color=d.latency_avg<10?'var(--green)':d.latency_avg<50?'var(--blue)':d.latency_avg<150?'var(--orange)':'var(--red)';
+    }
+  }
+}
+
+async function savePingTarget(){
+  const inp=document.getElementById('ping-target-input');
+  const target=inp&&inp.value.trim();
+  if(!target) return;
+  try{
+    await fetch('/api/config',{method:'POST',headers:_ch({'Content-Type':'application/json'}),
+      body:JSON.stringify({ping_target:target})});
+    _pingTarget=target;
+    const btn=document.getElementById('btn-ping-save');
+    if(btn){const orig=btn.textContent;btn.textContent='✓ Sauvegardé';setTimeout(()=>btn.textContent=orig,1500);}
+  }catch(e){ console.error('savePingTarget',e); }
+}
+
 // ─────────────────────────────────────────
 // Polling
 // ─────────────────────────────────────────
@@ -1219,7 +1615,9 @@ async function slowRefresh(){
     updateStats(stats);
     updateSwitch(sw);
     updateStorage(st);
-  } catch(e){}
+  } catch(e){ console.error('slowRefresh',e); }
+  doPing(false);
+  fetchPingHistory();
 }
 
 // ─────────────────────────────────────────
@@ -1251,7 +1649,7 @@ async function checkUpdatePopup(){
     document.getElementById('upd-latest').textContent='v'+d.latest;
     document.getElementById('upd-changelog').textContent=d.changelog||'Pas de notes de version.';
     document.getElementById('update-modal').classList.add('open');
-  }catch(e){}
+  }catch(e){ console.error('checkUpdate',e); }
 }
 function dismissUpdateModal(){
   sessionStorage.setItem('upd-dismissed','1');
@@ -1300,11 +1698,18 @@ slowRefresh();
 fetchOutages();
 fetchCalendar();
 checkTestMode();
+fetchPingConfig();
+fetchIPStatus();
 
 // Poll intervals
 setInterval(fastRefresh, 10000);
 setInterval(slowRefresh, 60000);
 setInterval(fetchOutages, 120000);
+setInterval(fetchIPStatus, 60000);
+
+// Forcer un re-check IP dès que le réseau revient ou que l'onglet devient visible
+window.addEventListener('online', fetchIPStatus);
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) fetchIPStatus(); });
 
 // Panneau tuiles (mobile)
 function toggleTilePanel(){
@@ -1328,8 +1733,8 @@ function toggleTilePanel(){
   function _bind(id,fn){const el=document.getElementById(id);if(el)el.addEventListener('click',fn);}
   _bind('btn-report',           ()=>openReportModal());
   _bind('btn-report-mobile',    ()=>openReportModal());
-  _bind('theme-btn',            ()=>toggleTheme());
-  _bind('theme-btn-mobile',     ()=>toggleTheme());
+  _bind('theme-btn',            ()=>toggleTheme(fetchCalendar));
+  _bind('theme-btn-mobile',     ()=>toggleTheme(fetchCalendar));
   _bind('btn-test-mode-banner', ()=>toggleTestMode());
   _bind('btn-test-mode',        ()=>toggleTestMode());
   _bind('btn-tile-show-all',    ()=>toggleAllTiles(true));
@@ -1342,6 +1747,15 @@ function toggleTilePanel(){
   document.getElementById('outages-per-page').addEventListener('change',e=>{
     outagesPerPage=parseInt(e.target.value); outagesPage=1; fetchOutages();
   });
+  _bind('btn-ip-refresh',        ()=>refreshExternalIP());
+  _bind('btn-ping',              ()=>doPing(true));
+  _bind('btn-ping-save',         ()=>savePingTarget());
+  const pingInp=document.getElementById('ping-target-input');
+  if(pingInp) pingInp.addEventListener('keydown',e=>{if(e.key==='Enter')doPing(true);});
+  const resetDay=document.getElementById('reset-day-input');
+  if(resetDay) resetDay.max=new Date().toISOString().slice(0,10);
+  const phw=document.getElementById('ping-history-window');
+  if(phw) phw.addEventListener('change',()=>fetchPingHistory());
   _bind('btn-reset-day',        ()=>resetOutageDay());
   _bind('btn-open-report',      ()=>openReport());
   _bind('btn-close-report',     ()=>document.getElementById('report-modal').classList.remove('open'));
@@ -1364,27 +1778,10 @@ function toggleTilePanel(){
   });
 })();
 
-// Thème
-function toggleTheme(){
-  const cur=document.documentElement.getAttribute('data-theme')||'dark';
-  const next=cur==='dark'?'light':'dark';
-  document.documentElement.setAttribute('data-theme',next);
-  localStorage.setItem('fbx-theme',next);
-  const icon=next==='dark'?'☀️':'🌙';
-  const btn=document.getElementById('theme-btn');
-  if(btn) btn.textContent=icon;
-  const mobileIcon=document.getElementById('theme-icon-mobile');
-  if(mobileIcon) mobileIcon.textContent=icon;
-  fetchCalendar(); // re-render calendar with correct theme colors
-}
-(function(){
-  const t=document.documentElement.getAttribute('data-theme')||'dark';
-  const icon=t==='dark'?'☀️':'🌙';
-  const btn=document.getElementById('theme-btn');
-  if(btn) btn.textContent=icon;
-  const mobileIcon=document.getElementById('theme-icon-mobile');
-  if(mobileIcon) mobileIcon.textContent=icon;
-})();
+// Thème : toggleTheme()/initThemeIcon() partagés via static/common.js.
+// fetchCalendar est passé en callback pour redessiner le calendrier avec les
+// bonnes couleurs après bascule (voir bindings plus haut).
+initThemeIcon();
 </script>
 
 <!-- MODAL MISE À JOUR -->

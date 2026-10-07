@@ -71,11 +71,11 @@ h1{font-size:22px;font-weight:700;margin-bottom:4px}
     <button type="submit" class="btn" id="submit-btn" {% if retry_after %}disabled{% endif %}>Connexion</button>
   </form>
   <div class="link-row"><a href="/forgot-password">Mot de passe oublié ?</a></div>
-  <div class="link-row" style="margin-top:8px"><button onclick="toggleTheme()" id="theme-btn" style="background:none;border:none;cursor:pointer;font-size:18px">☀️</button></div>
+  <div class="link-row" style="margin-top:8px"><button id="theme-btn" style="background:none;border:none;cursor:pointer;font-size:18px">☀️</button></div>
 </div>
 <script nonce="{{ g.csp_nonce }}">
 function toggleTheme(){var c=document.documentElement.getAttribute('data-theme')||'dark';var n=c==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',n);localStorage.setItem('fbx-theme',n);document.getElementById('theme-btn').textContent=n==='dark'?'☀️':'🌙';}
-(function(){var t=document.documentElement.getAttribute('data-theme')||'dark';var b=document.getElementById('theme-btn');if(b)b.textContent=t==='dark'?'☀️':'🌙';})();
+(function(){var t=document.documentElement.getAttribute('data-theme')||'dark';var b=document.getElementById('theme-btn');if(b){b.textContent=t==='dark'?'☀️':'🌙';b.addEventListener('click',toggleTheme);}})();
 {% if retry_after %}
 (function(){
   var el=document.getElementById('countdown');

@@ -13,6 +13,9 @@ import os
 import subprocess
 import logging
 import functools
+import re
+import ipaddress
+import concurrent.futures
 from datetime import datetime, timedelta
 
 import requests
@@ -22,6 +25,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import db
 import alerts as alert_mod
 import updater
+from format_utils import fmt_bytes, fmt_gb
 
 # ──────────────────────────────────────────────
 # Config
@@ -60,7 +64,7 @@ def set_security_headers(response):
         f"script-src 'self' 'nonce-{nonce}'; "
         f"style-src 'self' 'nonce-{nonce}'; "
         f"img-src 'self' data:; "
-        f"connect-src 'self'"
+        f"connect-src 'self' https://api.ipify.org https://api64.ipify.org https://ipecho.net"
     )
     return response
 
@@ -107,10 +111,19 @@ _metrics           = {}
 _switch_data       = []
 _storage_data      = {}
 _current_outage_id = None
-_last_conn_state   = None
-_last_ipv4         = "?"
-_last_prune        = 0
+_last_conn_state        = None
+_last_ipv4              = "?"
+_last_external_ip       = ""   # IP de sortie de cette machine (via ipify)
+_last_external_ip_check = 0.0  # timestamp du dernier contrôle
+_last_prune             = 0
+
+EXTERNAL_IP_CHECK_INTERVAL = 30  # secondes entre deux vérifications de l'IP de sortie de cette machine
 _test_mode_active  = False
+
+# Pool de threads partagé et borné, réutilisé pour toutes les tâches ponctuelles
+# en arrière-plan (ping, vérification IP externe, alertes, parallélisation des
+# appels HTTP Freebox) au lieu de créer un threading.Thread ad-hoc à chaque appel.
+_executor = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="fbxmon")
 
 RATE_LOGIN_MAX     = 5    # tentatives
 RATE_LOGIN_WINDOW  = 300  # secondes
@@ -124,6 +137,43 @@ def _get_ip():
     # Never trust X-Forwarded-For unless behind a known reverse proxy.
     # For direct deployment (default), always use the real remote address.
     return request.remote_addr or "127.0.0.1"
+
+
+class BadParam(Exception):
+    """Paramètre de requête invalide → réponse 400 JSON (et non une 500)."""
+
+    def __init__(self, name, detail="doit être un entier"):
+        super().__init__(name)
+        self.name = name
+        self.detail = detail
+
+
+@app.errorhandler(BadParam)
+def _handle_bad_param(e):
+    return jsonify({"error": f"Paramètre '{e.name}' invalide : {e.detail}"}), 400
+
+
+def _int_arg(name, default, minimum=None, maximum=None):
+    """Lit un paramètre de query string numérique, borné, sans jamais lever de 500.
+
+    `int(request.args.get(...))` brut renvoyait un traceback Werkzeug en 500 dès
+    qu'un paramètre était absurde (?seconds=abc, ?limit=, ?year=2e3), ce qui est
+    à la fois un bug d'API et une fuite d'information. Les valeurs hors bornes
+    sont ramenées dans l'intervalle (comportement historique des min/max),
+    seules les valeurs non entières sont rejetées en 400.
+    """
+    raw = request.args.get(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        val = int(str(raw).strip())
+    except (TypeError, ValueError):
+        raise BadParam(name)
+    if minimum is not None:
+        val = max(minimum, val)
+    if maximum is not None:
+        val = min(maximum, val)
+    return val
 
 
 # ──────────────────────────────────────────────
@@ -199,27 +249,8 @@ def fmt_uptime(seconds):
     return f"{d}j {h}h{m:02d}m" if d else f"{h}h{m:02d}m"
 
 
-def fmt_bytes(bps):
-    bits = bps * 8
-    if bits >= 1_000_000_000:
-        return f"{bits / 1_000_000_000:.1f} Gbit/s"
-    if bits >= 1_000_000:
-        return f"{bits / 1_000_000:.1f} Mbit/s"
-    if bits >= 1_000:
-        return f"{bits / 1_000:.0f} Kbit/s"
-    return f"{bits} bit/s"
-
-
-def fmt_gb(b):
-    if b is None:
-        return "—"
-    if b >= 1e12:
-        return f"{b/1e12:.2f} To"
-    if b >= 1e9:
-        return f"{b/1e9:.1f} Go"
-    if b >= 1e6:
-        return f"{b/1e6:.0f} Mo"
-    return f"{b/1e3:.0f} Ko"
+# fmt_bytes / fmt_gb sont désormais importés depuis format_utils (voir en-tête
+# du fichier) — conservés sous ces noms pour ne pas changer tous les appels.
 
 
 # ──────────────────────────────────────────────
@@ -274,6 +305,22 @@ def collect_connection():
     }
 
 
+# Les collecteurs tournent toutes les 10 s : une erreur permanente (endpoint
+# absent sur le modèle de box, port switch sans statistiques…) inonderait le
+# journal si on la loggait à chaque cycle. On trace donc en WARNING le premier
+# message d'une erreur donnée, puis en DEBUG tant qu'il ne change pas.
+_last_warn = {}
+
+
+def _warn_once(key: str, fmt: str, *args):
+    msg = fmt % args
+    if _last_warn.get(key) != msg:
+        _last_warn[key] = msg
+        log.warning("%s", msg)
+    else:
+        log.debug("%s (répétition)", msg)
+
+
 def collect_ftth():
     try:
         f = fbx_get("/connection/ftth/")
@@ -286,50 +333,73 @@ def collect_ftth():
             "sfp_pwr_tx":     round(f.get("sfp_pwr_tx", 0) / 100, 2),
             "sfp_pwr_rx":     round(f.get("sfp_pwr_rx", 0) / 100, 2),
         }
-    except Exception:
+    except Exception as e:
+        # Normal sur une box non-FTTH (endpoint inexistant) : tracé une seule
+        # fois, mais plus jamais avalé en silence.
+        _warn_once("ftth", "collect_ftth: %s", e)
         return None
+
+
+# NB: l'API locale Freebox (v8) n'expose pas d'endpoint batch pour récupérer en un
+# seul appel les hôtes de toutes les interfaces LAN, ni les stats de tous les ports
+# switch. On parallélise donc les appels par interface/port via le pool partagé
+# plutôt que de les faire séquentiellement (N+1 appels bloquants toutes les 10 s).
+
+def _count_reachable(iface):
+    name = iface.get("name", "?")
+    try:
+        hosts = fbx_get(f"/lan/browser/{name}/")
+        return sum(1 for h in hosts if h.get("reachable"))
+    except Exception as e:
+        # L'interface est ignorée dans le total : on le signale plutôt que de
+        # laisser un décompte d'hôtes silencieusement incomplet.
+        _warn_once(f"lan:{name}", "collect_lan: interface %s ignorée : %s", name, e)
+        return 0
 
 
 def collect_lan():
     try:
         interfaces = fbx_get("/lan/browser/interfaces/")
-        total = 0
-        for iface in interfaces:
-            try:
-                hosts  = fbx_get(f"/lan/browser/{iface['name']}/")
-                total += sum(1 for h in hosts if h.get("reachable"))
-            except Exception:
-                pass
+        if not interfaces:
+            return {"active_hosts": 0}
+        total = sum(_executor.map(_count_reachable, interfaces))
         return {"active_hosts": total}
     except Exception as e:
+        # active_hosts="?" → NULL en base (inconnu), pas 0 : voir db._measured.
+        _warn_once("lan", "collect_lan: %s", e)
         return {"active_hosts": "?", "error": str(e)}
+
+
+def _port_with_stats(port):
+    pid = port.get("id")
+    stats = {}
+    try:
+        stats = fbx_get(f"/switch/port/{pid}/stats/")
+    except Exception as e:
+        # Le port reste affiché mais ses compteurs tombent à 0 : on trace la
+        # cause au lieu de laisser croire à un port sans trafic.
+        _warn_once(f"switch:{pid}", "collect_switch: stats du port %s indisponibles : %s", pid, e)
+    return {
+        "id":     pid,
+        "name":   port.get("name", f"Port {pid}"),
+        "link":   port.get("link", "down"),
+        "speed":  port.get("speed", ""),
+        "duplex": port.get("duplex", ""),
+        "rx_bytes": stats.get("rx_good_bytes", 0),
+        "tx_bytes": stats.get("tx_bytes", 0),
+        "rx_bytes_rate": stats.get("rx_bytes_rate", 0),
+        "tx_bytes_rate": stats.get("tx_bytes_rate", 0),
+        "rx_err_packets": stats.get("rx_err_packets", 0),
+        "tx_fcs":         stats.get("tx_fcs", 0),
+    }
 
 
 def collect_switch():
     try:
         ports = fbx_get("/switch/status/")
-        result = []
-        for port in ports:
-            pid = port.get("id")
-            stats = {}
-            try:
-                stats = fbx_get(f"/switch/port/{pid}/stats/")
-            except Exception:
-                pass
-            result.append({
-                "id":     pid,
-                "name":   port.get("name", f"Port {pid}"),
-                "link":   port.get("link", "down"),
-                "speed":  port.get("speed", ""),
-                "duplex": port.get("duplex", ""),
-                "rx_bytes": stats.get("rx_good_bytes", 0),
-                "tx_bytes": stats.get("tx_bytes", 0),
-                "rx_bytes_rate": stats.get("rx_bytes_rate", 0),
-                "tx_bytes_rate": stats.get("tx_bytes_rate", 0),
-                "rx_err_packets": stats.get("rx_err_packets", 0),
-                "tx_fcs":         stats.get("tx_fcs", 0),
-            })
-        return result
+        if not ports:
+            return []
+        return list(_executor.map(_port_with_stats, ports))
     except Exception as e:
         log.warning("collect_switch: %s", e)
         return []
@@ -409,18 +479,33 @@ def process_connectivity(conn_state: str, ts: int):
         _last_conn_state = conn_state
         return
 
-    was_up  = _last_conn_state == "up"
-    is_up   = conn_state == "up"
+    was_up = _last_conn_state == "up"
+    is_up  = conn_state == "up"
 
     if was_up and not is_up:
         # Transition up -> down
         test = _test_mode_active
         cause = "test volontaire" if test else "connexion perdue"
-        oid = db.open_outage(ts, cause, is_test=1 if test else 0)
+        merge_window_s = int(db.get_config("outage_merge_window_s", "15") or "15")
+        oid, is_new = db.open_outage(ts, cause, is_test=1 if test else 0, merge_window_s=merge_window_s)
         _current_outage_id = oid
-        log.warning("Perte de connexion détectée à %s (test=%s)", datetime.fromtimestamp(ts), test)
-        if not test:
-            _schedule_outage_alert(ts, _last_ipv4)
+        if is_new:
+            log.warning("Perte de connexion détectée à %s (test=%s)", datetime.fromtimestamp(ts), test)
+        else:
+            log.info(
+                "Reconnexion instable (< %ds) : fusionnée avec l'incident en cours #%s",
+                merge_window_s, oid
+            )
+        if not test and is_new:
+            # Effets de bord de création déclenchés une seule fois par incident réel
+            # (pas à chaque micro up/down d'un même flap, pour éviter alertes en double).
+            _schedule_outage_alert(oid, ts, _last_ipv4)
+            _oid = oid
+            def _store_ext_ip(outage_id=_oid):
+                ip = _fetch_external_ip()
+                if ip:
+                    db.set_outage_external_ip(outage_id, ip)
+            _executor.submit(_store_ext_ip)
 
     elif not was_up and is_up:
         # Transition down -> up
@@ -429,17 +514,78 @@ def process_connectivity(conn_state: str, ts: int):
         if dur:
             log.info("Connexion rétablie après %d s", dur)
             cfg = db.get_all_config()
-            if cfg.get("alerts_enabled", "false").lower() == "true":
-                threading.Thread(
-                    target=alert_mod.send_recovery_alert,
-                    args=(cfg, ts - dur, dur, ipv4),
-                    daemon=True
-                ).start()
+            min_s = int(db.get_config("alert_outage_min_s", "30") or "30")
+            if cfg.get("alerts_enabled", "false").lower() == "true" and dur >= min_s:
+                _executor.submit(alert_mod.send_recovery_alert, cfg, ts - dur, dur, ipv4)
 
     _last_conn_state = conn_state
 
 
-def _schedule_outage_alert(started_at: int, ipv4: str):
+def _check_external_ip():
+    """Vérifie l'IP publique réelle via un service externe et envoie une alerte si elle change."""
+    global _last_external_ip, _last_external_ip_check
+
+    now = time.time()
+    if now - _last_external_ip_check < EXTERNAL_IP_CHECK_INTERVAL:
+        return
+    _last_external_ip_check = now
+
+    ip = _fetch_external_ip()
+    if not ip:
+        log.warning("Contrôle de l'IP de sortie impossible ; nouvel essai dans %d s", EXTERNAL_IP_CHECK_INTERVAL)
+        return
+
+    prev = _last_external_ip or db.get_config("monitor_external_ip_last", "")
+    _last_external_ip = ip
+    if ip == prev:
+        return
+    db.set_config("monitor_external_ip_last", ip)
+    if not prev:
+        log.info("IP de sortie initiale de la machine : %s", ip)
+        return
+
+    log.info("Changement d'IP de sortie de la machine : %s → %s", prev, ip)
+    cfg = db.get_all_config()
+    if (cfg.get("alerts_enabled", "false").lower() == "true"
+            and cfg.get("alert_ip_change", "true").lower() == "true"):
+        ok, msg = alert_mod.send_ip_change_alert(cfg, prev, ip)
+        if ok:
+            log.info("Alerte de changement d'IP remise au serveur SMTP")
+        else:
+            log.error("Alerte de changement d'IP non envoyée : %s", msg)
+
+
+def _bg_ping():
+    host = db.get_config("ping_target", "") or "8.8.8.8"
+    ts = int(datetime.now().timestamp())
+    try:
+        result = subprocess.run(
+            ["ping", "-c", "1", "-W", "1", "--", host],
+            capture_output=True, text=True, timeout=3
+        )
+        lat_m = re.search(r'rtt min/avg/max/mdev = ([\d.]+)', result.stdout)
+        if result.returncode == 0 and lat_m:
+            db.insert_ping_log(ts, host, float(lat_m.group(1)), 0)
+        else:
+            db.insert_ping_log(ts, host, None, 1)
+    except Exception:
+        db.insert_ping_log(ts, host, None, 1)
+
+
+def _fetch_external_ip() -> str:
+    for url in ("https://api.ipify.org", "https://ipecho.net/plain"):
+        try:
+            r = requests.get(url, timeout=4)
+            r.raise_for_status()
+            ip = r.text.strip()
+            if ipaddress.ip_address(ip).is_global:
+                return ip
+        except Exception:
+            continue
+    return ""
+
+
+def _schedule_outage_alert(outage_id: int, started_at: int, ipv4: str):
     min_s = int(db.get_config("alert_outage_min_s", "30") or "30")
 
     def _delayed():
@@ -447,23 +593,30 @@ def _schedule_outage_alert(started_at: int, ipv4: str):
         cfg = db.get_all_config()
         if cfg.get("alerts_enabled", "false").lower() != "true":
             return
-        # Check if outage still open
-        outages = db.get_outages(limit=1)
-        if outages and outages[0].get("ended_at") is None:
+        # Vérifie cette coupure précise, même si une autre a été créée depuis.
+        if db.is_outage_open(outage_id):
             alert_mod.send_outage_alert(cfg, started_at, ipv4)
 
-    threading.Thread(target=_delayed, daemon=True).start()
+    _executor.submit(_delayed)
 
 
 # ──────────────────────────────────────────────
 # Background collection loop
 # ──────────────────────────────────────────────
 
+def _safe_check_external_ip():
+    try:
+        _check_external_ip()
+    except Exception as e:
+        log.warning("_check_external_ip: %s", e)
+
+
 def background_loop():
     global _metrics, _switch_data, _storage_data, _last_prune
     slow_counter = 0
 
     while True:
+        cycle_start = time.monotonic()
         try:
             data   = collect()
             sw     = _switch_data
@@ -487,6 +640,10 @@ def background_loop():
             db.insert_metric(data)
             conn_state = data.get("connection", {}).get("state", "")
             process_connectivity(conn_state, int(datetime.now().timestamp()))
+            # _check_external_ip() peut bloquer jusqu'à ~8 s (2 requêtes HTTP à 4 s de
+            # timeout) : déportée dans le pool partagé pour ne jamais retarder le cycle.
+            _executor.submit(_safe_check_external_ip)
+            _executor.submit(_bg_ping)
 
             # Weekly prune
             now = time.time()
@@ -500,7 +657,17 @@ def background_loop():
                 _metrics["error"] = str(e)
 
         slow_counter += 1
-        time.sleep(COLLECT_INTERVAL)
+        # Vise un intervalle fixe entre deux débuts de cycle plutôt qu'un sleep fixe
+        # après un travail de durée variable (qui dérive au fil du temps).
+        elapsed  = time.monotonic() - cycle_start
+        sleep_s  = COLLECT_INTERVAL - elapsed
+        if sleep_s > 0:
+            time.sleep(sleep_s)
+        else:
+            log.warning(
+                "Cycle de collecte trop long (%.1fs > %ds) — cycle suivant lancé sans attendre",
+                elapsed, COLLECT_INTERVAL
+            )
 
 
 # ──────────────────────────────────────────────
@@ -513,8 +680,12 @@ def render_monthly_report(year: int, month: int, nonce: str = "") -> str:
                    "Juillet","Août","Septembre","Octobre","Novembre","Décembre"]
     month_name = month_names[month - 1]
     since_ts   = int(datetime(year, month, 1).timestamp())
-    stats      = db.get_period_stats(since_ts)
-    outages    = db.get_outages(limit=200)
+    if month == 12:
+        until_ts = int(datetime(year + 1, 1, 1).timestamp())
+    else:
+        until_ts = int(datetime(year, month + 1, 1).timestamp())
+    stats      = db.get_period_stats(since_ts, until_ts)
+    outages    = db.get_outages_between(since_ts, until_ts)
     cal_data   = db.get_daily_uptime(year, month)
     _, days    = monthrange(year, month)
 
@@ -551,22 +722,34 @@ def render_monthly_report(year: int, month: int, nonce: str = "") -> str:
 
     outage_rows = ""
     for o in outages:
-        if o.get("started_at", 0) < since_ts:
-            continue
+        is_test = int(o.get("is_test") or 0)
+        type_lbl = "🧪 Test" if is_test else "⚠️ Réelle"
+        flap_n = int(o.get("flap_count") or 0)
+        flap_lbl = f" <span style='color:#718096'>({flap_n} reconnexion{'s' if flap_n>1 else ''} fusionnée{'s' if flap_n>1 else ''})</span>" if flap_n else ""
         outage_rows += (
             f"<tr><td>{o['started_fmt']}</td><td>{o['ended_fmt']}</td>"
-            f"<td>{o['duration_fmt']}</td><td>{o.get('cause','—')}</td></tr>"
+            f"<td>{o['duration_fmt']}</td><td>{type_lbl}</td>"
+            f"<td>{o.get('cause','—')}{flap_lbl}</td></tr>"
         )
 
     # Pré-calcul du tableau des coupures (évite f-string imbriqué, incompatible Python < 3.12)
+    real_cnt = stats.get("outage_count", 0) or 0
+    test_cnt = stats.get("test_outage_count", 0) or 0
+    outage_subtotal = (
+        f"<p style='color:#a0aec0;font-size:13px;margin-top:-4px'>"
+        f"{real_cnt} coupure{'s' if real_cnt != 1 else ''} réelle{'s' if real_cnt != 1 else ''}"
+        + (f" ({test_cnt} marquée{'s' if test_cnt > 1 else ''} test)" if test_cnt else "")
+        + " — chaque incident regroupe ses éventuelles reconnexions rapides (flap).</p>"
+    )
     if outage_rows:
         outage_section = (
-            "<table><tr><th>Début</th><th>Fin</th><th>Durée</th><th>Cause</th></tr>"
+            outage_subtotal
+            + "<table><tr><th>Début</th><th>Fin</th><th>Durée</th><th>Type</th><th>Cause</th></tr>"
             + outage_rows
             + "</table>"
         )
     else:
-        outage_section = "<p style='color:#718096;font-size:13px'>Aucune coupure ce mois.</p>"
+        outage_section = outage_subtotal + "<p style='color:#718096;font-size:13px'>Aucune coupure ce mois.</p>"
 
     def stat(v, fmt_fn=None, unit=""):
         if v is None: return "—"
@@ -653,10 +836,14 @@ PERIOD_MAP = {
 ALLOWED_CONFIG_KEYS = {
     "smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_from",
     "smtp_tls", "smtp_ssl", "alert_to", "alerts_enabled", "alert_outage_min_s",
+    "outage_merge_window_s",
+    "alert_ip_change",
     "webhooks_enabled", "webhook_discord", "webhook_google_chat",
     "webhook_teams", "webhook_synology", "webhook_generic",
-    "github_repo", "github_token", "port",
+    "github_repo", "github_token", "port", "ping_target",
 }
+
+_VALID_TARGET_RE = re.compile(r'^[a-zA-Z0-9.\-_:]{1,253}$')
 
 
 @app.route("/forgot-password", methods=["GET", "POST"])
@@ -674,6 +861,9 @@ def forgot_password():
         email    = request.form.get("email", "").strip()
         user = db.get_user(username)
         if not user or not db.check_recovery_email(username, email):
+            # Seul l'échec consomme un jeton (même correctif que /login).
+            db.record_failed_attempt(ip, "forgot")
+            log.warning("Échec de récupération de mot de passe pour %r depuis %s", username, ip)
             return render_template("forgot_password.html", smtp_ok=smtp_ok,
                                    error="Nom d'utilisateur ou email de récupération incorrect.")
         if not smtp_ok:
@@ -682,7 +872,14 @@ def forgot_password():
             return redirect(url_for("reset_password"))
         code = db.create_reset_code(username)
         ok, msg = alert_mod.send_reset_code_email(cfg, email, username, code)
+        # Décision volontaire : contrairement à /login, l'identité vérifiée ne
+        # purge pas le compteur et consomme un jeton. Ici le « succès » a un
+        # effet de bord coûteux (envoi d'un email vers l'adresse de
+        # récupération) ; sans ce décompte, quiconque connaît le couple
+        # utilisateur/email pourrait inonder la boîte de la victime.
+        db.record_failed_attempt(ip, "forgot")
         if not ok:
+            log.warning("Envoi du code de réinitialisation échoué pour %r : %s", username, msg)
             return render_template("forgot_password.html", smtp_ok=smtp_ok,
                                    error=f"Erreur d'envoi email : {msg}")
         session["reset_pending_user"] = username
@@ -728,9 +925,14 @@ def reset_password():
                                        error="Le code est requis.")
             code_id = db.verify_reset_code(username, code)
             if code_id is None:
+                # Seul un code erroné consomme un jeton : le rate limiting sert
+                # ici à empêcher le brute-force de l'OTP à 6 chiffres.
+                db.record_failed_attempt(ip, "reset")
+                log.warning("Code de réinitialisation invalide pour %r depuis %s", username, ip)
                 return render_template("reset_password.html", username=username, no_smtp=no_smtp,
                                        error="Code invalide ou expiré.")
             db.consume_reset_code(code_id)
+            db.clear_rate_limit(ip, "reset")
         db.update_password(username, generate_password_hash(new_pw))
         session.pop("reset_allowed_user", None)
         session.pop("reset_pending_user", None)
@@ -755,6 +957,7 @@ def setup():
         recovery_email = request.form.get("recovery_email", "").strip()
         if recovery_email:
             db.set_recovery_email(username, recovery_email)
+        session.clear()
         session["user"] = username
         return redirect(url_for("index"))
     return render_template("setup.html")
@@ -773,8 +976,15 @@ def login():
         password = request.form.get("password", "")
         user = db.get_user(username)
         if user and check_password_hash(user["password"], password):
+            # Succès : aucune tentative n'est comptabilisée, et le compteur est
+            # purgé. Sinon 5 connexions légitimes dans la fenêtre bloquaient la
+            # 6ᵉ, le rate limiting ne devant viser que les échecs répétés.
+            db.clear_rate_limit(ip, "login")
+            session.clear()
             session["user"] = username
             return redirect(url_for("index"))
+        db.record_failed_attempt(ip, "login")
+        log.warning("Échec d'authentification pour %r depuis %s", username, ip)
         return render_template("login.html", error="Identifiants incorrects")
     retry_after = db.rate_limit_retry_after(ip, "login", RATE_LOGIN_MAX, RATE_LOGIN_WINDOW)
     return render_template("login.html", retry_after=retry_after if retry_after > 0 else None)
@@ -803,13 +1013,39 @@ def index():
 @login_required
 def route_metrics():
     with _lock:
-        return jsonify(_metrics)
+        data = dict(_metrics)
+    data["external_ip"] = _last_external_ip or None
+    return jsonify(data)
+
+
+@app.route("/api/external-ip")
+@login_required
+def route_external_ip():
+    with _lock:
+        freebox_ip = _metrics.get("connection", {}).get("ipv4", "") or ""
+    ext_ip     = _last_external_ip or ""
+    checked_at = _last_external_ip_check or None
+    return jsonify({
+        "freebox_ip": freebox_ip,
+        "external_ip": ext_ip,
+        "same": bool(freebox_ip and ext_ip and freebox_ip == ext_ip),
+        "checked_at": int(checked_at) if checked_at else None,
+    })
+
+
+@app.route("/api/external-ip/refresh", methods=["POST"])
+@login_required
+@csrf_required
+def route_external_ip_refresh():
+    global _last_external_ip_check
+    _last_external_ip_check = 0.0
+    return jsonify({"ok": True})
 
 
 @app.route("/api/history")
 @login_required
 def route_history():
-    seconds = min(int(request.args.get("seconds", 600)), 86400)
+    seconds = _int_arg("seconds", 600, minimum=1, maximum=86400)
     return jsonify(db.get_history(seconds))
 
 
@@ -825,8 +1061,8 @@ def route_stats():
 @app.route("/api/outages")
 @login_required
 def route_outages():
-    limit  = min(int(request.args.get("limit", 50)), 200)
-    offset = max(0, int(request.args.get("offset", 0)))
+    limit  = _int_arg("limit", 50, minimum=1, maximum=200)
+    offset = _int_arg("offset", 0, minimum=0)
     return jsonify(db.get_outages(limit, offset))
 
 
@@ -884,8 +1120,8 @@ def route_test_mode_set():
 @login_required
 def route_calendar():
     now   = datetime.now()
-    year  = max(2000, min(int(request.args.get("year",  now.year)),  now.year + 1))
-    month = max(1,    min(int(request.args.get("month", now.month)), 12))
+    year  = _int_arg("year",  now.year,  minimum=2000, maximum=now.year + 1)
+    month = _int_arg("month", now.month, minimum=1,    maximum=12)
     return jsonify(db.get_daily_uptime(year, month))
 
 
@@ -903,11 +1139,60 @@ def route_storage():
         return jsonify(_storage_data)
 
 
+@app.route("/api/ping-history")
+@login_required
+def route_ping_history():
+    seconds = _int_arg("seconds", 1800, minimum=1, maximum=86400)
+    return jsonify(db.get_ping_history(seconds))
+
+
+@app.route("/api/ping")
+@login_required
+def route_ping():
+    target = request.args.get("target", "").strip()
+    if not target:
+        target = db.get_config("ping_target", "") or "mafreebox.freebox.fr"
+    if not _VALID_TARGET_RE.match(target):
+        return jsonify({"ok": False, "error": "Cible invalide"}), 400
+    try:
+        result = subprocess.run(
+            ["ping", "-c", "3", "-W", "2", "--", target],
+            capture_output=True, text=True, timeout=12
+        )
+        output = result.stdout + result.stderr
+        success = result.returncode == 0
+        lat_m   = re.search(r'rtt min/avg/max/mdev = ([\d.]+)/([\d.]+)/([\d.]+)/([\d.]+) ms', output)
+        loss_m  = re.search(r'(\d+)% packet loss', output)
+        return jsonify({
+            "ok": True,
+            "target": target,
+            "success": success,
+            "latency_min": float(lat_m.group(1)) if lat_m else None,
+            "latency_avg": float(lat_m.group(2)) if lat_m else None,
+            "latency_max": float(lat_m.group(3)) if lat_m else None,
+            "packet_loss": int(loss_m.group(1)) if loss_m else (0 if success else 100),
+        })
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": True, "target": target, "success": False,
+                        "latency_min": None, "latency_avg": None, "latency_max": None,
+                        "packet_loss": 100, "error": "Timeout"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/ping-target")
+@login_required
+def route_ping_target():
+    """Route minimaliste pour le dashboard : évite de récupérer toute la config
+    (webhooks, github_token, etc.) juste pour lire ping_target."""
+    return jsonify({"ping_target": db.get_config("ping_target", "") or ""})
+
+
 @app.route("/api/config", methods=["GET"])
 @login_required
 def route_config_get():
     cfg = db.get_all_config()
-    # Redact secrets
+    cfg.pop("flask_secret_key", None)
     if "smtp_password" in cfg:
         cfg["smtp_password"] = "••••••••" if cfg["smtp_password"] else ""
     if "github_token" in cfg:
@@ -953,8 +1238,8 @@ def route_test_webhook():
 @login_required
 def route_report():
     now   = datetime.now()
-    year  = max(2000, min(int(request.args.get("year",  now.year)),  now.year + 1))
-    month = max(1,    min(int(request.args.get("month", now.month)), 12))
+    year  = _int_arg("year",  now.year,  minimum=2000, maximum=now.year + 1)
+    month = _int_arg("month", now.month, minimum=1,    maximum=12)
     nonce = getattr(g, "csp_nonce", "")
     html  = render_monthly_report(year, month, nonce)
     return Response(html, mimetype="text/html")
@@ -966,12 +1251,17 @@ def route_get_recovery_email():
     return jsonify({"email": db.get_recovery_email(session["user"])})
 
 
+_EMAIL_RE = re.compile(r'^[^@\s]{1,64}@[^@\s]{1,253}\.[^@\s]{1,63}$')
+
+
 @app.route("/api/auth/recovery-email", methods=["POST"])
 @login_required
 @csrf_required
 def route_set_recovery_email():
     data  = request.get_json(force=True) or {}
     email = data.get("email", "").strip()
+    if email and not _EMAIL_RE.match(email):
+        return jsonify({"ok": False, "msg": "Format email invalide"}), 400
     db.set_recovery_email(session["user"], email)
     return jsonify({"ok": True, "msg": "Email de récupération enregistré"})
 
@@ -1032,7 +1322,7 @@ def route_update_apply():
         return jsonify({"ok": False, "msg": "Dépôt GitHub non configuré"}), 400
     ok, msg = updater.apply_update(repo, token or None, tag=tag)
     if ok:
-        threading.Thread(target=_restart_service, daemon=True).start()
+        _executor.submit(_restart_service)
     return jsonify({"ok": ok, "msg": msg})
 
 
@@ -1055,12 +1345,15 @@ if __name__ == "__main__":
     load_credentials()
     db.init_db()
 
-    # Migration : re-chiffrement des secrets en clair existants
+    # Migration : re-chiffrement des secrets en clair existants.
+    # get_config() déchiffre déjà la valeur lue — is_encrypted() sur son résultat
+    # est donc toujours faux (jamais préfixé 'enc:') et déclenchait ce message à
+    # CHAQUE démarrage. On teste la valeur brute en base via get_config_raw().
     import crypto as _crypto
     for _key in ("smtp_password", "github_token"):
-        _val = db.get_config(_key)
-        if _val and not _crypto.is_encrypted(_val):
-            db.set_config(_key, _val)
+        _raw = db.get_config_raw(_key)
+        if _raw and not _crypto.is_encrypted(_raw):
+            db.set_config(_key, db.get_config(_key))
             log.info("Secret '%s' migré vers stockage chiffré", _key)
 
     # Seed config depuis config.json
