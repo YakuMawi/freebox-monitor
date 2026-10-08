@@ -517,6 +517,7 @@ header{display:flex;align-items:center;justify-content:space-between;
     <div class="stat-box"><div class="val" id="ps-uptime">—</div><div class="lbl">Disponibilité</div></div>
     <div class="stat-box"><div class="val" id="ps-outages">—</div><div class="lbl">Coupures réelles</div><div class="lbl" id="ps-test-count" style="color:var(--blue);margin-top:2px"></div></div>
     <div class="stat-box"><div class="val" id="ps-outage-dur">—</div><div class="lbl">Durée totale coupures</div></div>
+    <div class="stat-box" title="Appels à l'API locale de la Freebox ayant échoué (session, DNS ou HTTP ponctuel) alors que la box répondait au ping : ce ne sont pas des coupures réseau."><div class="val" id="ps-api-errors">—</div><div class="lbl">Erreurs API Freebox</div><div class="lbl" id="ps-api-detail" style="color:var(--blue);margin-top:2px"></div></div>
     <div class="stat-box"><div class="val" id="ps-avg-down">—</div><div class="lbl">Débit desc. moyen</div></div>
     <div class="stat-box"><div class="val" id="ps-max-down">—</div><div class="lbl">Débit desc. max</div></div>
     <div class="stat-box"><div class="val" id="ps-avg-up">—</div><div class="lbl">Débit mont. moyen</div></div>
@@ -1156,6 +1157,9 @@ function updateStats(s){
   const tc=s.test_outage_count||0;
   setText('ps-test-count', tc>0?`+${tc} test${tc>1?'s':''}` : '');
   setText('ps-outage-dur',s.outage_total_fmt||'—');
+  setText('ps-api-errors', s.api_error_count??'—');
+  const netOk=s.api_error_net_ok||0, rOk=s.api_error_retry_ok||0;
+  setText('ps-api-detail', (netOk||rOk) ? `${netOk+rOk} sans perte réseau` : '');
   setText('ps-avg-down',  s.avg_down!=null?f(s.avg_down):'—');
   setText('ps-max-down',  s.max_down!=null?f(s.max_down):'—');
   setText('ps-avg-up',    s.avg_up!=null?f(s.avg_up):'—');

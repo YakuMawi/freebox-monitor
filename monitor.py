@@ -14,6 +14,7 @@ import subprocess
 import logging
 import functools
 import re
+import socket
 import ipaddress
 import concurrent.futures
 from datetime import datetime, timedelta
@@ -191,47 +192,105 @@ def load_credentials():
     return data
 
 
-def api_url(path=""):
-    return f"{FREEBOX_URL}/api/{API_VERSION}{path}"
+def api_url(path="", base=None):
+    return f"{base or FREEBOX_URL}/api/{API_VERSION}{path}"
 
 
-def get_session():
+# ──────────────────────────────────────────────
+# Classification des échecs d'appel à l'API locale
+# ──────────────────────────────────────────────
+# Un échec de `fbx_get` ne signifie PAS « la connexion Internet est tombée ».
+# On distingue deux familles, car seule la première est un indice (et pas une
+# preuve) de perte de connectivité :
+#   • FbxNetworkError : la requête n'a pas pu atteindre la box (DNS, TCP, timeout)
+#   • FbxApiError     : la box a répondu, ou le problème est applicatif
+#                       (session expirée, HTTP 4xx/5xx, JSON/`success: false`)
+
+class FbxError(Exception):
+    """Échec d'un appel à l'API locale de la Freebox. `kind` alimente api_errors."""
+
+    kind = "api"
+
+    def __init__(self, message, kind=None):
+        super().__init__(message)
+        if kind:
+            self.kind = kind
+
+
+class FbxNetworkError(FbxError):
+    """La requête HTTP n'a pas atteint la box (DNS, TCP refusé, timeout)."""
+
+    kind = "connexion"
+
+
+class FbxApiError(FbxError):
+    """La box (ou la couche applicative) a renvoyé une erreur : pas un problème réseau."""
+
+    kind = "http"
+
+
+def _classify_request_exc(exc):
+    """Traduit une exception `requests` en FbxNetworkError/FbxApiError typée."""
+    if isinstance(exc, requests.exceptions.ConnectionError):
+        txt = str(exc)
+        # Un échec de résolution de `mafreebox.freebox.fr` est un raté DNS de
+        # CETTE machine pour CETTE requête : le réseau peut être parfaitement up.
+        if "NameResolution" in txt or "name resolution" in txt or "getaddrinfo" in txt:
+            return FbxNetworkError(exc, kind="dns")
+        return FbxNetworkError(exc, kind="connexion")
+    if isinstance(exc, requests.exceptions.Timeout):
+        return FbxNetworkError(exc, kind="timeout")
+    if isinstance(exc, requests.exceptions.HTTPError):
+        return FbxApiError(exc, kind="http")
+    if isinstance(exc, ValueError):           # JSONDecodeError hérite de ValueError
+        return FbxApiError(exc, kind="reponse")
+    if isinstance(exc, FbxError):
+        return exc
+    return FbxApiError(exc, kind="api")
+
+
+def get_session(timeout=10, base=None):
     global _session_token, _session_time
     if _session_token and (time.time() - _session_time) < 1500:
         return _session_token
-    creds     = load_credentials()
-    r         = requests.get(api_url("/login/"), timeout=10)
-    challenge = r.json()["result"]["challenge"]
-    password  = hmac.new(
-        creds["app_token"].encode(), challenge.encode(), hashlib.sha1
-    ).hexdigest()
-    r = requests.post(api_url("/login/session/"), json={
-        "app_id": creds["app_id"], "password": password
-    }, timeout=10)
-    result = r.json()
-    if not result["success"]:
-        raise RuntimeError(f"Erreur session: {result}")
+    creds = load_credentials()
+    try:
+        r         = requests.get(api_url("/login/", base), timeout=timeout)
+        challenge = r.json()["result"]["challenge"]
+        password  = hmac.new(
+            creds["app_token"].encode(), challenge.encode(), hashlib.sha1
+        ).hexdigest()
+        r = requests.post(api_url("/login/session/", base), json={
+            "app_id": creds["app_id"], "password": password
+        }, timeout=timeout)
+        result = r.json()
+    except Exception as e:
+        raise _classify_request_exc(e) from e
+    if not result.get("success"):
+        # Problème d'authentification : la box a répondu, le réseau va bien.
+        raise FbxApiError(f"Erreur session: {result}", kind="session")
     _session_token = result["result"]["session_token"]
     _session_time  = time.time()
     return _session_token
 
 
-def fbx_get(path):
+def fbx_get(path, timeout=10, base=None):
     global _session_token, _session_time
-    token = get_session()
+    token = get_session(timeout=timeout, base=base)
     try:
-        r = requests.get(api_url(path), headers={"X-Fbx-App-Auth": token}, timeout=10)
+        r = requests.get(api_url(path, base), headers={"X-Fbx-App-Auth": token},
+                         timeout=timeout)
         r.raise_for_status()
         data = r.json()
-    except Exception:
+    except Exception as e:
         # Invalidate cached session so next cycle re-authenticates (e.g. after box reboot)
         _session_token = None
         _session_time  = 0
-        raise
+        raise _classify_request_exc(e) from e
     if not data.get("success"):
         _session_token = None
         _session_time  = 0
-        raise RuntimeError(f"API error {path}: {data.get('msg', data)}")
+        raise FbxApiError(f"API error {path}: {data.get('msg', data)}", kind="http")
     return data["result"]
 
 
@@ -282,8 +341,8 @@ def collect_system():
     }
 
 
-def collect_connection():
-    c = fbx_get("/connection/")
+def collect_connection(timeout=10, base=None):
+    c = fbx_get("/connection/", timeout=timeout, base=base)
     return {
         "state":          c.get("state", ""),
         "type":           c.get("type", ""),
@@ -449,19 +508,194 @@ def collect_storage():
         return {"disks": [], "partitions": []}
 
 
+# ──────────────────────────────────────────────
+# Corroboration réseau indépendante (ICMP)
+# ──────────────────────────────────────────────
+# Un échec de l'appel HTTP à l'API locale ne prouve rien à lui seul. Avant de
+# déclarer une coupure, on vérifie par un canal totalement distinct (ICMP, sans
+# DNS) si la box répond encore. Si oui, c'est une erreur d'API, pas une coupure.
+
+FBX_RETRY_TIMEOUT = 4          # timeout court pour le ré-essai immédiat
+PING_CORROBORATE_MAX_AGE = 30  # âge max d'un ping de ping_log réutilisable
+_FBX_IP_TTL = 300
+
+_fbx_ip        = None
+_fbx_ip_time   = 0.0
+_last_api_state = None   # dernier `state` réellement lu sur la box
+
+
+def _fbx_host() -> str:
+    return FREEBOX_URL.split("//", 1)[-1].split("/", 1)[0].split(":", 1)[0]
+
+
+def _resolve_fbx_ip(force=False):
+    """IP de la box, mise en cache (et persistée) pour pouvoir sonder/atteindre la
+    box même quand la résolution DNS de `mafreebox.freebox.fr` échoue ponctuellement."""
+    global _fbx_ip, _fbx_ip_time
+    now = time.time()
+    if _fbx_ip and not force and (now - _fbx_ip_time) < _FBX_IP_TTL:
+        return _fbx_ip
+    try:
+        ip = socket.gethostbyname(_fbx_host())
+        if ip:
+            _fbx_ip, _fbx_ip_time = ip, now
+            if db.get_config("monitor_fbx_ip_last", "") != ip:
+                db.set_config("monitor_fbx_ip_last", ip)
+            return ip
+    except Exception as e:
+        log.debug("Résolution de %s impossible : %s", _fbx_host(), e)
+    return _fbx_ip or (db.get_config("monitor_fbx_ip_last", "") or None)
+
+
+def _ping_once(host: str, timeout_s: int = 1):
+    """(joignable, latence_ms). Retourne (None, None) si l'hôte est inconnu."""
+    if not host:
+        return None, None
+    try:
+        r = subprocess.run(
+            ["ping", "-c", "1", "-W", str(timeout_s), "--", host],
+            capture_output=True, text=True, timeout=timeout_s + 2
+        )
+        m = re.search(r'rtt min/avg/max/mdev = ([\d.]+)', r.stdout)
+        if r.returncode == 0 and m:
+            return True, float(m.group(1))
+        return False, None
+    except Exception:
+        return False, None
+
+
+def _corroborate_network():
+    """Sonde indépendante après un échec d'API locale.
+
+    Retourne (box_ok, box_latency, net_ok). `box_ok` est le signal décisif : si
+    la box répond en ICMP, l'application n'a pas « perdu la connexion », elle a
+    raté un appel HTTP. `net_ok` n'est qu'un élément de contexte supplémentaire
+    (la machine peut sortir par un lien de secours, voir CLAUDE.md)."""
+    box_ok, box_lat = _ping_once(_resolve_fbx_ip())
+    if box_ok is False:
+        # Second essai après ré-résolution : l'IP en cache peut être périmée
+        # (changement de plan d'adressage) et un unique paquet ICMP peut tomber.
+        ip2 = _resolve_fbx_ip(force=True)
+        box_ok, box_lat = _ping_once(ip2)
+
+    net_ok = None
+    recent = db.get_last_ping(PING_CORROBORATE_MAX_AGE)
+    if recent is not None:
+        net_ok = 0 if recent.get("lost") else 1
+    else:
+        target = db.get_config("ping_target", "") or "8.8.8.8"
+        ok, _ = _ping_once(target)
+        net_ok = None if ok is None else (1 if ok else 0)
+    return box_ok, box_lat, net_ok
+
+
+def _collect_connection_resilient():
+    """collect_connection() avec ré-essai et corroboration ICMP.
+
+    Retourne (conn_dict, api_error|None). `conn_dict["state"]` ne vaut "down"
+    que si une vraie perte de connectivité a été confirmée : sinon on reporte le
+    dernier état réellement lu sur la box, pour ne pas fabriquer de fausse
+    coupure ni dégrader le calcul de disponibilité."""
+    global _last_api_state
+    try:
+        conn = collect_connection()
+        _last_api_state = conn.get("state") or _last_api_state
+        return conn, None
+    except Exception as e1:
+        err  = e1 if isinstance(e1, FbxError) else _classify_request_exc(e1)
+        kind = err.kind
+
+        # 1) Ré-essai immédiat, timeout court. La majorité de ces échecs sont des
+        #    ratés transitoires (paquet SYN perdu, résolution DNS momentanée).
+        #    Sur échec DNS, on retente directement sur l'IP en cache de la box.
+        base = None
+        if kind == "dns":
+            ip = _resolve_fbx_ip()
+            if ip:
+                base = f"http://{ip}"
+        try:
+            conn = collect_connection(timeout=FBX_RETRY_TIMEOUT, base=base)
+            _last_api_state = conn.get("state") or _last_api_state
+            return conn, {"kind": kind, "outcome": "resolu_au_retry", "detail": str(err)}
+        except Exception as e2:
+            err = e2 if isinstance(e2, FbxError) else _classify_request_exc(e2)
+
+        # 2) Deux échecs de suite : on tranche avec une sonde ICMP indépendante.
+        box_ok, box_lat, net_ok = _corroborate_network()
+
+        if box_ok:
+            # La box répond en ICMP → ce n'est pas une coupure réseau.
+            return (
+                {"error": str(err), "error_kind": kind, "api_error": True,
+                 "state": _last_api_state or "up", "state_assumed": True},
+                {"kind": kind, "outcome": "reseau_ok", "detail": str(err),
+                 "box_ping_ok": 1, "box_latency_ms": box_lat, "net_ping_ok": net_ok},
+            )
+
+        if box_ok is None and net_ok == 1:
+            # Box injoignable faute d'adresse connue, mais le réseau répond :
+            # pas assez d'éléments pour affirmer une coupure.
+            return (
+                {"error": str(err), "error_kind": kind, "api_error": True,
+                 "state": _last_api_state or "up", "state_assumed": True},
+                {"kind": kind, "outcome": "reseau_ok", "detail": str(err),
+                 "box_ping_ok": None, "box_latency_ms": None, "net_ping_ok": net_ok},
+            )
+
+        # 3) La box ne répond ni en HTTP ni en ICMP : vraie perte de connectivité
+        #    (box éteinte, câble débranché, lien coupé). Comportement historique.
+        _last_api_state = "down"
+        return (
+            {"error": str(err), "error_kind": kind, "state": "down"},
+            {"kind": kind, "outcome": "coupure_confirmee", "detail": str(err),
+             "box_ping_ok": 0 if box_ok is False else None,
+             "box_latency_ms": None, "net_ping_ok": net_ok},
+        )
+
+
 def collect():
     m = {"collected_at": datetime.now().strftime("%H:%M:%S")}
     try:
         m["system"] = collect_system()
     except Exception as e:
         m["system"] = {"error": str(e)}
-    try:
-        m["connection"] = collect_connection()
-    except Exception as e:
-        m["connection"] = {"error": str(e), "state": "down"}
+    m["connection"], m["api_error"] = _collect_connection_resilient()
     m["ftth"] = collect_ftth()
     m["lan"]  = collect_lan()
     return m
+
+
+def _record_api_error(api_err: dict, ts: int):
+    """Journalise et enregistre un échec d'API locale, distinctement d'une coupure."""
+    if not api_err:
+        return
+    outcome = api_err.get("outcome")
+    try:
+        db.insert_api_error(
+            ts, api_err.get("kind", "api"), outcome, api_err.get("detail", ""),
+            box_ping_ok=api_err.get("box_ping_ok"),
+            box_latency_ms=api_err.get("box_latency_ms"),
+            net_ping_ok=api_err.get("net_ping_ok"),
+        )
+    except Exception as e:
+        log.warning("Enregistrement de l'erreur API impossible : %s", e)
+
+    detail = (api_err.get("detail") or "")[:200]
+    if outcome == "resolu_au_retry":
+        _warn_once(
+            "api_retry",
+            "Erreur API Freebox (%s) résorbée au ré-essai immédiat — aucune "
+            "coupure réseau : %s", api_err.get("kind"), detail
+        )
+    elif outcome == "reseau_ok":
+        lat = api_err.get("box_latency_ms")
+        log.warning(
+            "Erreur API Freebox (%s), réseau OK selon ping (box joignable%s) — "
+            "AUCUNE coupure réseau enregistrée : %s",
+            api_err.get("kind"),
+            f" en {lat:.1f} ms" if lat else "",
+            detail
+        )
 
 
 # ──────────────────────────────────────────────
@@ -638,8 +872,13 @@ def background_loop():
                 _storage_data = st
 
             db.insert_metric(data)
+            now_ts     = int(datetime.now().timestamp())
             conn_state = data.get("connection", {}).get("state", "")
-            process_connectivity(conn_state, int(datetime.now().timestamp()))
+            # Une erreur d'API locale est tracée dans api_errors ; elle ne crée
+            # une entrée dans `outages` que si la sonde ICMP a confirmé la perte
+            # de connectivité (conn_state == "down" ci-dessous).
+            _record_api_error(data.get("api_error"), now_ts)
+            process_connectivity(conn_state, now_ts)
             # _check_external_ip() peut bloquer jusqu'à ~8 s (2 requêtes HTTP à 4 s de
             # timeout) : déportée dans le pool partagé pour ne jamais retarder le cycle.
             _executor.submit(_safe_check_external_ip)
@@ -741,6 +980,20 @@ def render_monthly_report(year: int, month: int, nonce: str = "") -> str:
         + (f" ({test_cnt} marquée{'s' if test_cnt > 1 else ''} test)" if test_cnt else "")
         + " — chaque incident regroupe ses éventuelles reconnexions rapides (flap).</p>"
     )
+    api_cnt    = stats.get("api_error_count", 0) or 0
+    api_net_ok = (stats.get("api_error_net_ok", 0) or 0) + (stats.get("api_error_retry_ok", 0) or 0)
+    if api_cnt:
+        kinds = stats.get("api_error_by_kind") or {}
+        kinds_txt = ", ".join(f"{k} : {n}" for k, n in kinds.items())
+        outage_subtotal += (
+            f"<p style='color:#a0aec0;font-size:13px'>À part : {api_cnt} erreur"
+            f"{'s' if api_cnt > 1 else ''} d'appel à l'API locale de la box, dont "
+            f"{api_net_ok} <b>sans aucune perte de connectivité</b> (la box répondait au "
+            f"ping ICMP au même instant). Ces événements ne sont pas des coupures et ne "
+            f"sont pas comptés dans la disponibilité."
+            + (f" Répartition : {kinds_txt}." if kinds_txt else "")
+            + "</p>"
+        )
     if outage_rows:
         outage_section = (
             outage_subtotal
@@ -804,6 +1057,7 @@ def render_monthly_report(year: int, month: int, nonce: str = "") -> str:
   <div class="stat-card"><div class="stat-val">{stat(stats.get('uptime_pct'))}%</div><div class="stat-lbl">Disponibilité</div></div>
   <div class="stat-card"><div class="stat-val">{stats.get('outage_count',0)}</div><div class="stat-lbl">Coupures</div></div>
   <div class="stat-card"><div class="stat-val">{stats.get('outage_total_fmt','—')}</div><div class="stat-lbl">Durée totale coupures</div></div>
+  <div class="stat-card"><div class="stat-val">{stats.get('api_error_count',0)}</div><div class="stat-lbl">Erreurs API Freebox (hors coupure)</div></div>
   <div class="stat-card"><div class="stat-val">{stat(stats.get('avg_down'), fmt_bytes)}</div><div class="stat-lbl">Débit descendant moyen</div></div>
   <div class="stat-card"><div class="stat-val">{stat(stats.get('max_down'), fmt_bytes)}</div><div class="stat-lbl">Débit descendant max</div></div>
   <div class="stat-card"><div class="stat-val">{stat(stats.get('avg_up'), fmt_bytes)}</div><div class="stat-lbl">Débit montant moyen</div></div>
@@ -1064,6 +1318,15 @@ def route_outages():
     limit  = _int_arg("limit", 50, minimum=1, maximum=200)
     offset = _int_arg("offset", 0, minimum=0)
     return jsonify(db.get_outages(limit, offset))
+
+
+@app.route("/api/api-errors")
+@login_required
+def route_api_errors():
+    """Échecs d'appel à l'API locale de la box, distincts des coupures réseau."""
+    limit  = _int_arg("limit", 50, minimum=1, maximum=200)
+    offset = _int_arg("offset", 0, minimum=0)
+    return jsonify(db.get_api_errors(limit, offset))
 
 
 @app.route("/api/csrf-token")

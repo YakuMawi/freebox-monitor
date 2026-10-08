@@ -151,6 +151,21 @@ def init_db():
                 latency_ms REAL,
                 lost       INTEGER DEFAULT 0
             );
+            -- Échecs de l'appel à l'API locale de la box qui NE sont PAS des
+            -- coupures réseau : session expirée, HTTP 4xx/5xx, JSON invalide,
+            -- résolution DNS ou TCP ponctuellement en échec alors que la box
+            -- répond au ping. Tracés ici au lieu de polluer `outages`.
+            CREATE TABLE IF NOT EXISTS api_errors (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts         INTEGER NOT NULL,
+                kind       TEXT    NOT NULL,   -- dns | timeout | connexion | session | http | reponse
+                outcome    TEXT    NOT NULL,   -- resolu_au_retry | reseau_ok | coupure_confirmee
+                detail     TEXT    DEFAULT '',
+                box_ping_ok   INTEGER,         -- 1/0/NULL : la box répond-elle au ping ICMP ?
+                box_latency_ms REAL,
+                net_ping_ok   INTEGER          -- 1/0/NULL : cible externe (ping_target) joignable ?
+            );
+            CREATE INDEX IF NOT EXISTS idx_api_errors_ts ON api_errors(ts);
             CREATE INDEX IF NOT EXISTS idx_metrics_ts    ON metrics(ts);
             CREATE INDEX IF NOT EXISTS idx_outages_start ON outages(started_at);
             CREATE INDEX IF NOT EXISTS idx_rate_limits   ON rate_limits(action, ip, ts);
@@ -351,6 +366,12 @@ def get_period_stats(since_ts: int, until_ts: int = None) -> dict:
     result["test_outage_count"] = out_row["test_cnt"] if out_row else 0
     result["outage_total_s"]    = out_row["total_s"]  if out_row else 0
     result["outage_total_fmt"]  = _fmt_dur(result.get("outage_total_s", 0))
+    # Erreurs de l'API locale de la box, comptées à part des vraies coupures.
+    api = get_api_error_summary(since_ts, until_ts)
+    result["api_error_count"]       = api["total"]
+    result["api_error_net_ok"]      = api["false_positives"]
+    result["api_error_retry_ok"]    = api["retry_ok"]
+    result["api_error_by_kind"]     = api["by_kind"]
     return result
 
 
@@ -760,6 +781,7 @@ def prune_metrics(keep_days: int = 365) -> int:
         c.execute("DELETE FROM metrics WHERE ts < ?", (cutoff,))
         c.execute("DELETE FROM rate_limits WHERE ts < ?", (rate_cutoff,))
         c.execute("DELETE FROM ping_log WHERE ts < ?", (cutoff,))
+        c.execute("DELETE FROM api_errors WHERE ts < ?", (cutoff,))
         return c.execute("SELECT changes()").fetchone()[0]
 
 
@@ -779,6 +801,74 @@ def get_ping_history(seconds: int = 1800) -> list:
             (since,)
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_last_ping(max_age_s: int = 30) -> dict:
+    """Dernier ping enregistré par `_bg_ping`, s'il est assez récent pour servir
+    de corroboration indépendante (None sinon)."""
+    since = int(time.time()) - max_age_s
+    with _conn() as c:
+        row = c.execute(
+            "SELECT ts, host, latency_ms, lost FROM ping_log "
+            "WHERE ts >= ? ORDER BY ts DESC LIMIT 1",
+            (since,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def insert_api_error(ts: int, kind: str, outcome: str, detail: str = "",
+                     box_ping_ok=None, box_latency_ms=None, net_ping_ok=None):
+    """Trace un échec de l'appel à l'API locale de la box. Volontairement séparé
+    de la table `outages` : ce n'est une coupure réseau que si outcome vaut
+    'coupure_confirmee' (et dans ce cas une entrée `outages` existe aussi)."""
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO api_errors(ts, kind, outcome, detail, box_ping_ok, "
+            "box_latency_ms, net_ping_ok) VALUES(?,?,?,?,?,?,?)",
+            (ts, kind, outcome, (detail or "")[:500],
+             box_ping_ok, box_latency_ms, net_ping_ok)
+        )
+
+
+def get_api_errors(limit: int = 50, offset: int = 0) -> dict:
+    with _conn() as c:
+        total = c.execute("SELECT COUNT(*) FROM api_errors").fetchone()[0]
+        rows = c.execute(
+            "SELECT * FROM api_errors ORDER BY ts DESC LIMIT ? OFFSET ?",
+            (limit, offset)
+        ).fetchall()
+    items = []
+    for r in rows:
+        d = dict(r)
+        d["ts_fmt"] = _ts_fmt(d.get("ts"))
+        items.append(d)
+    return {"items": items, "total": total}
+
+
+def get_api_error_summary(since_ts: int, until_ts: int = None) -> dict:
+    """Décompte des erreurs d'API locale sur une période, par issue.
+
+    `false_positives` = ce que les versions précédentes comptabilisaient à tort
+    comme des coupures réseau (la box répondait au ping)."""
+    where = "ts >= ?" + (" AND ts < ?" if until_ts is not None else "")
+    params = (since_ts, until_ts) if until_ts is not None else (since_ts,)
+    with _conn() as c:
+        rows = c.execute(
+            f"SELECT outcome, COUNT(*) AS n FROM api_errors WHERE {where} GROUP BY outcome",
+            params
+        ).fetchall()
+        kinds = c.execute(
+            f"SELECT kind, COUNT(*) AS n FROM api_errors WHERE {where} GROUP BY kind ORDER BY n DESC",
+            params
+        ).fetchall()
+    by_outcome = {r["outcome"]: r["n"] for r in rows}
+    return {
+        "total":           sum(by_outcome.values()),
+        "retry_ok":        by_outcome.get("resolu_au_retry", 0),
+        "false_positives": by_outcome.get("reseau_ok", 0),
+        "confirmed":       by_outcome.get("coupure_confirmee", 0),
+        "by_kind":         {r["kind"]: r["n"] for r in kinds},
+    }
 
 
 def set_outage_external_ip(outage_id: int, ip: str):
