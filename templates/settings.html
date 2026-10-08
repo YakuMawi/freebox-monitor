@@ -128,6 +128,7 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
 <div class="tabs">
   <button class="tab-btn active" id="tab-btn-smtp">Alertes SMTP</button>
   <button class="tab-btn" id="tab-btn-webhooks">Webhooks</button>
+  <button class="tab-btn" id="tab-btn-network">Réseau</button>
   <button class="tab-btn" id="tab-btn-update">Mise à jour</button>
   <button class="tab-btn" id="tab-btn-account">Compte</button>
 </div>
@@ -258,6 +259,31 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
 </div>
 
 <!-- ═══════════════════════════════════════
+     ONGLET RÉSEAU
+═══════════════════════════════════════ -->
+<div class="tab-content" id="tab-network">
+  <div class="card">
+    <div class="card-title">Freebox — accès réseau local</div>
+    <div class="form-group">
+      <label>IP locale de la Freebox</label>
+      <input type="text" id="freebox_lan_ip" placeholder="ex: 192.168.252.254">
+      <small style="color:var(--muted);font-size:11px;display:block;margin-top:4px">
+        Sur certaines installations, <code>mafreebox.freebox.fr</code> se résout en IP
+        <strong>publique</strong> de la box plutôt qu'en IP locale (routage spécifique de
+        cette machine) — un chemin plus lent et sujet aux ratés DNS/timeout. En renseignant
+        ici l'IP locale réelle de la Freebox, elle est utilisée en priorité pour tous les
+        appels à l'API locale et pour le ping dédié « Routeur », sans passer par le DNS.
+        Laisser vide pour garder la résolution DNS classique. En cas d'IP injoignable
+        (topologie réseau qui change), l'application retombe automatiquement et
+        temporairement sur le DNS.
+      </small>
+    </div>
+    <button class="btn btn-primary" id="btn-network-save">Enregistrer</button>
+    <div class="alert" id="network-result"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
      ONGLET MISE À JOUR
 ═══════════════════════════════════════ -->
 <div class="tab-content" id="tab-update">
@@ -366,13 +392,14 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
 // Tab switching
 // ─────────────────────────────────────
 function switchTab(name){
-  ['smtp','webhooks','update','account'].forEach(n=>{
+  ['smtp','webhooks','network','update','account'].forEach(n=>{
     document.getElementById('tab-btn-'+n).classList.toggle('active', n===name);
     document.getElementById('tab-'+n).classList.toggle('active', n===name);
   });
   if(name==='update')   loadVersion();
   if(name==='smtp')     loadSmtpConfig();
   if(name==='webhooks') loadWebhooksConfig();
+  if(name==='network')  loadNetworkConfig();
   if(name==='account')  loadAccount();
 }
 
@@ -520,6 +547,26 @@ async function testWebhook(type){
   badge.className='wh-badge '+(data.ok?'ok':'err');
   badge.textContent=data.ok?'OK':'Erreur';
   badge.title=data.msg||'';
+}
+
+// ─────────────────────────────────────
+// Réseau
+// ─────────────────────────────────────
+async function loadNetworkConfig(){
+  const r=await fetch('/api/config');
+  const cfg=await r.json();
+  document.getElementById('freebox_lan_ip').value=cfg.freebox_lan_ip||'';
+}
+
+async function saveNetworkConfig(){
+  const data={freebox_lan_ip: document.getElementById('freebox_lan_ip').value.trim()};
+  const r=await fetch('/api/config',{method:'POST',headers:_ch({'Content-Type':'application/json'}),body:JSON.stringify(data)});
+  const result=await r.json().catch(()=>({}));
+  if(r.ok && result.ok!==false){
+    showAlert('network-result','Configuration enregistrée','ok');
+  } else {
+    showAlert('network-result', result.error||'Erreur de validation', 'err');
+  }
 }
 
 // ─────────────────────────────────────
@@ -710,7 +757,7 @@ async function changePassword(){
 // Bind all event listeners (CSP: no inline onclick allowed)
 // ─────────────────────────────────────
 document.getElementById('theme-btn').addEventListener('click', ()=>toggleTheme());
-['smtp','webhooks','update','account'].forEach(name=>{
+['smtp','webhooks','network','update','account'].forEach(name=>{
   document.getElementById('tab-btn-'+name).addEventListener('click', ()=>switchTab(name));
 });
 document.getElementById('email-chips-container').addEventListener('click', ()=>document.getElementById('email-chip-input').focus());
@@ -722,6 +769,7 @@ document.getElementById('btn-smtp-test').addEventListener('click', testSmtp);
   document.getElementById('btn-wh-test-'+type).addEventListener('click', ()=>testWebhook(type));
 });
 document.getElementById('btn-wh-save').addEventListener('click', saveWebhooks);
+document.getElementById('btn-network-save').addEventListener('click', saveNetworkConfig);
 document.getElementById('btn-update-save').addEventListener('click', saveUpdateConfig);
 document.getElementById('btn-update-check').addEventListener('click', checkUpdate);
 document.getElementById('btn-apply-update').addEventListener('click', applyUpdate);

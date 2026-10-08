@@ -694,6 +694,21 @@ header{display:flex;align-items:center;justify-content:space-between;
     <div style="position:relative;height:130px"><canvas id="chart-ping-box"></canvas></div>
     <div id="ping-history-box-stats" style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--muted)"></div>
   </div>
+
+  <!-- Vérification DNS (résolution de google.fr à chaque ping, sans cache) -->
+  <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px">
+      <span class="card-title" style="margin:0">Vérification DNS (google.fr)</span>
+      <select id="ping-history-dns-window" style="padding:4px 8px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;cursor:pointer">
+        <option value="600">10 min</option>
+        <option value="1800" selected>30 min</option>
+        <option value="3600">1 heure</option>
+        <option value="21600">6 heures</option>
+      </select>
+    </div>
+    <div style="position:relative;height:130px"><canvas id="chart-ping-dns"></canvas></div>
+    <div id="ping-history-dns-stats" style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--muted)"></div>
+  </div>
 </div>
 
 <!-- ═══════════════════════════════════════════
@@ -997,6 +1012,7 @@ function _makePingChart(canvasId){
 }
 const pingChart = _makePingChart('chart-ping');
 const pingBoxChart = _makePingChart('chart-ping-box');
+const pingDnsChart = _makePingChart('chart-ping-dns');
 
 // ─────────────────────────────────────────
 // Update UI from metrics
@@ -1347,24 +1363,26 @@ function updatePingHistory(rows, chart, statsElId){
     `<span style="width:10px;height:10px;background:#fc8181;border-radius:2px;display:inline-block"></span>perdu</span>`;
 }
 
-async function fetchPingHistory(){
-  const w=document.getElementById('ping-history-window');
+async function fetchPingHistoryGeneric(windowElId, target, chart, statsElId){
+  const w=document.getElementById(windowElId);
   const s=w?w.value:1800;
   try{
-    const r=await fetch('/api/ping-history?seconds='+s+'&target=external');
+    const r=await fetch('/api/ping-history?seconds='+s+'&target='+target);
     const d=await r.json();
-    updatePingHistory(d, pingChart, 'ping-history-stats');
-  }catch(e){ console.error('fetchPingHistory',e); }
+    updatePingHistory(d, chart, statsElId);
+  }catch(e){ console.error('fetchPingHistory:'+target,e); }
+}
+
+async function fetchPingHistory(){
+  return fetchPingHistoryGeneric('ping-history-window', 'external', pingChart, 'ping-history-stats');
 }
 
 async function fetchPingHistoryBox(){
-  const w=document.getElementById('ping-history-box-window');
-  const s=w?w.value:1800;
-  try{
-    const r=await fetch('/api/ping-history?seconds='+s+'&target=box');
-    const d=await r.json();
-    updatePingHistory(d, pingBoxChart, 'ping-history-box-stats');
-  }catch(e){ console.error('fetchPingHistoryBox',e); }
+  return fetchPingHistoryGeneric('ping-history-box-window', 'box', pingBoxChart, 'ping-history-box-stats');
+}
+
+async function fetchPingHistoryDns(){
+  return fetchPingHistoryGeneric('ping-history-dns-window', 'dns', pingDnsChart, 'ping-history-dns-stats');
 }
 
 // ─────────────────────────────────────────
@@ -1718,6 +1736,7 @@ async function slowRefresh(){
   doPing(false);
   fetchPingHistory();
   fetchPingHistoryBox();
+  fetchPingHistoryDns();
 }
 
 // ─────────────────────────────────────────
@@ -1884,6 +1903,8 @@ function toggleTilePanel(){
   if(phw) phw.addEventListener('change',()=>fetchPingHistory());
   const phbw=document.getElementById('ping-history-box-window');
   if(phbw) phbw.addEventListener('change',()=>fetchPingHistoryBox());
+  const phdw=document.getElementById('ping-history-dns-window');
+  if(phdw) phdw.addEventListener('change',()=>fetchPingHistoryDns());
   _bind('btn-reset-day',        ()=>resetOutageDay());
   _bind('btn-open-report',      ()=>openReport());
   _bind('btn-close-report',     ()=>document.getElementById('report-modal').classList.remove('open'));

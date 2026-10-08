@@ -374,15 +374,37 @@ def _note_retry_healed(path, err):
 def fbx_get(path, timeout=10, base=None, retry=True):
     """GET sur l'API locale, avec un ré-essai immédiat sur raté transitoire.
 
-    Sur échec DNS, le ré-essai tape directement l'IP de la box mise en cache
-    (_resolve_fbx_ip) pour contourner le résolveur défaillant. Si le ré-essai
-    échoue aussi, l'erreur est propagée telle quelle : on ne fabrique jamais de
-    valeur, un trou réel reste un trou."""
+    Si `freebox_lan_ip` est configuré (voir Settings), l'appel PRINCIPAL tape
+    directement cette IP locale plutôt que `mafreebox.freebox.fr` — sur cette
+    machine ce hostname résout en IP publique (routage spécifique), un chemin
+    plus lent et sujet aux ratés DNS/timeout que l'accès direct en LAN. Sans
+    config (chaîne vide), comportement inchangé : résolution DNS classique à
+    chaque appel, via `base=None` → `FREEBOX_URL`.
+
+    Sur échec DNS (ou sur échec réseau de l'IP LAN configurée), le ré-essai
+    tape directement l'IP de la box mise en cache (_resolve_fbx_ip) pour
+    contourner le résolveur défaillant — ou, si c'est l'IP LAN configurée qui
+    vient d'échouer, l'IP LAN est marquée en échec temporaire et ce ré-essai
+    retombe sur le DNS classique (`retry_base` reste basé sur `base`, pas sur
+    l'IP LAN). Si le ré-essai échoue aussi, l'erreur est propagée telle quelle :
+    on ne fabrique jamais de valeur, un trou réel reste un trou."""
     had_token = _session_token is not None
+
+    primary_base = base
+    used_lan_ip = None
+    if primary_base is None:
+        used_lan_ip = _fbx_lan_ip_configured()
+        if used_lan_ip:
+            primary_base = f"http://{used_lan_ip}"
+
     try:
-        return _fbx_get_once(path, timeout, base)
+        return _fbx_get_once(path, timeout, primary_base)
     except FbxError as e:
         err = e
+        if used_lan_ip and isinstance(err, FbxNetworkError):
+            # L'IP LAN configurée n'a pas répondu (TCP/timeout) : pas la peine
+            # de s'y acharner aux prochains appels pendant un moment.
+            mark_fbx_lan_ip_failed()
         if not retry or not _is_transient(err, had_token):
             raise
 
@@ -622,10 +644,47 @@ FBX_RETRY_TIMEOUT = 4          # timeout court pour le ré-essai immédiat
 PING_CORROBORATE_MAX_AGE = 30  # âge max d'un ping de ping_log réutilisable
 _FBX_IP_TTL = 300
 PING_HOST_BOX = "box"          # valeur de ping_log.host pour le ping dédié routeur
+PING_HOST_DNS_CHECK = "dns-check"  # valeur de ping_log.host pour le ping dédié résolution DNS
+DNS_CHECK_TARGET = "google.fr"     # ciblé par hostname : la résolution DNS est exercée à chaque ping
 
 _fbx_ip        = None
 _fbx_ip_time   = 0.0
 _last_api_state = None   # dernier `state` réellement lu sur la box
+
+# IP locale de la Freebox : sur cette machine, `mafreebox.freebox.fr` se résout
+# en IP PUBLIQUE (routage spécifique de la machine), un chemin réseau fragile et
+# plus lent que l'accès direct en LAN. `freebox_lan_ip` (Settings) permet de
+# configurer l'IP locale réelle (ex: 192.168.252.254) pour la prioriser sur le
+# DNS. _IPV4_RE sert à la fois à valider cette config (route /api/config) et à
+# vérifier sa forme ici avant de s'en servir.
+_IPV4_RE = re.compile(r'^(25[0-5]|2[0-4]\d|1?\d{1,2})(\.(25[0-5]|2[0-4]\d|1?\d{1,2})){3}$')
+
+_fbx_lan_fail_until  = 0.0   # timestamp jusqu'auquel on évite l'IP LAN configurée (repli DNS)
+_FBX_LAN_FAIL_COOLDOWN = 120  # durée du repli DNS après un échec confirmé de l'IP LAN configurée
+
+
+def _fbx_lan_ip_configured() -> str:
+    """IP locale de la Freebox configurée manuellement (Settings), si valide et
+    pas en repli temporaire après un échec récent. Chaîne vide sinon."""
+    if time.time() < _fbx_lan_fail_until:
+        return ""
+    ip = (db.get_config("freebox_lan_ip", "") or "").strip()
+    return ip if _IPV4_RE.match(ip) else ""
+
+
+def mark_fbx_lan_ip_failed():
+    """À appeler quand l'IP LAN configurée (freebox_lan_ip) s'avère injoignable
+    malgré le ré-essai : bascule temporairement sur la résolution DNS classique
+    de `mafreebox.freebox.fr` plutôt que de s'acharner sur une IP morte (la
+    topologie réseau a pu changer, ou l'IP saisie est invalide). Le prochain
+    appel retente l'IP LAN après _FBX_LAN_FAIL_COOLDOWN secondes."""
+    global _fbx_lan_fail_until
+    _fbx_lan_fail_until = time.time() + _FBX_LAN_FAIL_COOLDOWN
+    log.warning(
+        "IP locale Freebox configurée (%s) injoignable — repli sur la résolution "
+        "DNS de mafreebox.freebox.fr pendant %ds",
+        db.get_config("freebox_lan_ip", ""), _FBX_LAN_FAIL_COOLDOWN
+    )
 
 
 def _fbx_host() -> str:
@@ -633,9 +692,18 @@ def _fbx_host() -> str:
 
 
 def _resolve_fbx_ip(force=False):
-    """IP de la box, mise en cache (et persistée) pour pouvoir sonder/atteindre la
-    box même quand la résolution DNS de `mafreebox.freebox.fr` échoue ponctuellement."""
+    """IP de la box à utiliser pour les sondes ICMP (ping box, corroboration
+    réseau). Priorité à l'IP locale configurée manuellement (freebox_lan_ip) :
+    elle est directement joignable et nettement plus rapide/fiable que le
+    chemin public auquel `mafreebox.freebox.fr` résout sur cette machine. Si
+    elle est marquée en échec (mark_fbx_lan_ip_failed), on retombe sur la
+    résolution DNS classique, mise en cache (et persistée) pour pouvoir
+    sonder/atteindre la box même quand cette résolution échoue ponctuellement."""
     global _fbx_ip, _fbx_ip_time
+    lan_ip = _fbx_lan_ip_configured()
+    if lan_ip:
+        return lan_ip
+
     now = time.time()
     if _fbx_ip and not force and (now - _fbx_ip_time) < _FBX_IP_TTL:
         return _fbx_ip
@@ -918,6 +986,19 @@ def _bg_ping_box():
     db.insert_ping_log(ts, PING_HOST_BOX, lat if ok else None, 0 if ok else 1)
 
 
+def _bg_ping_dns_check():
+    """Ping ICMP dédié vers le hostname `google.fr` (jamais une IP), enregistré
+    séparément dans ping_log sous host=PING_HOST_DNS_CHECK. Contrairement à
+    `_bg_ping` (qui cible souvent une IP brute, 8.8.8.8 par défaut, et ne teste
+    donc jamais le DNS) et à `_resolve_fbx_ip` (qui met l'IP en cache), ce ping
+    exerce une résolution DNS fraîche à CHAQUE appel, sans aucun cache
+    applicatif : le signal reflète fidèlement la santé de la résolution DNS de
+    la machine à l'instant T."""
+    ts = int(datetime.now().timestamp())
+    ok, lat = _ping_once(DNS_CHECK_TARGET, timeout_s=1)
+    db.insert_ping_log(ts, PING_HOST_DNS_CHECK, lat if ok else None, 0 if ok else 1)
+
+
 def _fetch_external_ip() -> str:
     for url in ("https://api.ipify.org", "https://ipecho.net/plain"):
         try:
@@ -996,6 +1077,7 @@ def background_loop():
             _executor.submit(_safe_check_external_ip)
             _executor.submit(_bg_ping)
             _executor.submit(_bg_ping_box)
+            _executor.submit(_bg_ping_dns_check)
 
             # Weekly prune
             now = time.time()
@@ -1207,7 +1289,7 @@ ALLOWED_CONFIG_KEYS = {
     "alert_ip_change",
     "webhooks_enabled", "webhook_discord", "webhook_google_chat",
     "webhook_teams", "webhook_synology", "webhook_generic",
-    "github_repo", "github_token", "port", "ping_target",
+    "github_repo", "github_token", "port", "ping_target", "freebox_lan_ip",
 }
 
 _VALID_TARGET_RE = re.compile(r'^[a-zA-Z0-9.\-_:]{1,253}$')
@@ -1519,14 +1601,19 @@ def route_storage():
 @login_required
 def route_ping_history():
     """`target=box` renvoie l'historique dédié du ping ICMP vers la box
-    (host=PING_HOST_BOX). Par défaut (`external`, ou absent), renvoie
-    l'historique existant — toutes les cibles sauf la box — pour ne pas
-    changer le comportement de l'ancien appel sans paramètre."""
+    (host=PING_HOST_BOX). `target=dns` renvoie l'historique du ping dédié de
+    vérification DNS vers google.fr (host=PING_HOST_DNS_CHECK). Par défaut
+    (`external`, ou absent), renvoie l'historique existant — toutes les cibles
+    sauf box/dns — pour ne pas changer le comportement de l'ancien appel sans
+    paramètre."""
     seconds = _int_arg("seconds", 1800, minimum=1, maximum=86400)
     target = request.args.get("target", "external").strip().lower()
     if target == "box":
         return jsonify(db.get_ping_history(seconds, host=PING_HOST_BOX))
-    rows = [r for r in db.get_ping_history(seconds) if r.get("host") != PING_HOST_BOX]
+    if target in ("dns", "dns-check", "google", "google.fr"):
+        return jsonify(db.get_ping_history(seconds, host=PING_HOST_DNS_CHECK))
+    rows = [r for r in db.get_ping_history(seconds)
+            if r.get("host") not in (PING_HOST_BOX, PING_HOST_DNS_CHECK)]
     return jsonify(rows)
 
 
@@ -1594,6 +1681,10 @@ def route_config_post():
             continue  # Ignore unknown / sensitive keys
         if key in ("smtp_password", "github_token") and value == "••••••••":
             continue  # Don't overwrite with redacted placeholder
+        if key == "freebox_lan_ip":
+            value = str(value).strip()
+            if value and not _IPV4_RE.match(value):
+                return jsonify({"ok": False, "error": "IP locale invalide (format attendu: a.b.c.d)"}), 400
         db.set_config(key, str(value))
     return jsonify({"ok": True})
 
