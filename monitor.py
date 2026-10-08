@@ -209,12 +209,16 @@ def api_url(path="", base=None):
 class FbxError(Exception):
     """Échec d'un appel à l'API locale de la Freebox. `kind` alimente api_errors."""
 
-    kind = "api"
+    kind   = "api"
+    status = None   # code HTTP si la box a répondu
+    code   = None   # error_code applicatif renvoyé par l'API
 
-    def __init__(self, message, kind=None):
+    def __init__(self, message, kind=None, status=None, code=None):
         super().__init__(message)
         if kind:
             self.kind = kind
+        self.status = status
+        self.code   = code
 
 
 class FbxNetworkError(FbxError):
@@ -241,7 +245,8 @@ def _classify_request_exc(exc):
     if isinstance(exc, requests.exceptions.Timeout):
         return FbxNetworkError(exc, kind="timeout")
     if isinstance(exc, requests.exceptions.HTTPError):
-        return FbxApiError(exc, kind="http")
+        return FbxApiError(exc, kind="http",
+                           status=getattr(exc.response, "status_code", None))
     if isinstance(exc, ValueError):           # JSONDecodeError hérite de ValueError
         return FbxApiError(exc, kind="reponse")
     if isinstance(exc, FbxError):
@@ -274,7 +279,8 @@ def get_session(timeout=10, base=None):
     return _session_token
 
 
-def fbx_get(path, timeout=10, base=None):
+def _fbx_get_once(path, timeout, base):
+    """Un seul appel GET à l'API locale, sans ré-essai. Lève un FbxError typé."""
     global _session_token, _session_time
     token = get_session(timeout=timeout, base=base)
     try:
@@ -283,15 +289,112 @@ def fbx_get(path, timeout=10, base=None):
         r.raise_for_status()
         data = r.json()
     except Exception as e:
-        # Invalidate cached session so next cycle re-authenticates (e.g. after box reboot)
-        _session_token = None
-        _session_time  = 0
-        raise _classify_request_exc(e) from e
+        err = _classify_request_exc(e)
+        # On n'invalide la session que si la box a RÉPONDU (HTTP 4xx/5xx, JSON
+        # illisible) : c'est là qu'elle peut être périmée, p.ex. après un reboot
+        # de la box. Un échec purement réseau (DNS, SYN perdu, timeout) ne dit
+        # rien de sa validité, et la jeter imposait un re-login complet (2
+        # requêtes de plus) à chaque raté transitoire — soit un surcroît de
+        # charge précisément au moment où le réseau trébuche.
+        if not isinstance(err, FbxNetworkError):
+            _session_token = None
+            _session_time  = 0
+        raise err from e
     if not data.get("success"):
         _session_token = None
         _session_time  = 0
-        raise FbxApiError(f"API error {path}: {data.get('msg', data)}", kind="http")
+        raise FbxApiError(f"API error {path}: {data.get('msg', data)}",
+                          kind="http", code=data.get("error_code"))
     return data["result"]
+
+
+# ──────────────────────────────────────────────
+# Ré-essai immédiat, commun à TOUS les appels d'API
+# ──────────────────────────────────────────────
+# Les ratés transitoires de l'API locale (résolution de mafreebox.freebox.fr
+# momentanément KO, SYN perdu, timeout de connexion) frappent n'importe quel
+# endpoint, pas seulement /connection/. Non absorbés, ils font échouer le
+# collecteur concerné et la métrique part en NULL : un trou dans le graphe
+# (température « en pointillé ») alors que la box répond parfaitement en ICMP.
+# Le ré-essai vit donc DANS fbx_get, pour que /system/, /connection/ftth/,
+# /lan/browser/*, /switch/* en profitent automatiquement sans dupliquer la
+# logique dans chaque collecteur.
+
+def _is_transient(err, had_token: bool) -> bool:
+    """Un ré-essai immédiat a-t-il une chance d'aboutir ?"""
+    if isinstance(err, FbxNetworkError):
+        return True                         # dns / connexion / timeout
+    if err.kind == "reponse":
+        return True                         # réponse tronquée / JSON illisible
+    # Session périmée (box redémarrée) : _fbx_get_once vient de jeter le token,
+    # le ré-essai se ré-authentifie et aboutit — au lieu de perdre un cycle.
+    # Strictement limité aux signatures d'authentification : un endpoint absent
+    # du modèle de box (404 sur /connection/ftth/ d'une box non-FTTH) renverrait
+    # la même erreur à chaque cycle, et le ré-essayer doublerait la charge pour
+    # rien — or c'est justement la charge qui provoque les ratés transitoires.
+    return (
+        had_token and err.kind == "http"
+        and (err.status in (401, 403)
+             or err.code in ("auth_required", "invalid_session"))
+    )
+
+
+# Une rafale touche souvent plusieurs appels d'un coup (les 12 requêtes LAN /
+# switch parallèles ratent ensemble) : on ne trace qu'un ré-essai par endpoint
+# et par minute, sinon api_errors enflerait sans rien apprendre de plus.
+# /connection/ est exempté pour ne pas dégrader le décompte historique sur
+# lequel reposent les statistiques de disponibilité.
+_RETRY_NOTE_MIN_INTERVAL = 60
+_retry_notes      = {}
+_retry_notes_lock = threading.Lock()
+
+
+def _note_retry_healed(path, err):
+    """Trace un raté transitoire absorbé par le ré-essai (donnée bien collectée).
+
+    Ce n'est pas un incident — mais il faut pouvoir le compter : c'est la preuve
+    qu'un trou de données vient d'un raté d'API et non d'une coupure réseau."""
+    now = time.time()
+    if not path.startswith("/connection/"):
+        with _retry_notes_lock:
+            if now - _retry_notes.get(path, 0) < _RETRY_NOTE_MIN_INTERVAL:
+                return
+            _retry_notes[path] = now
+    _warn_once(
+        f"retry:{path}",
+        "Appel %s résorbé au ré-essai immédiat (%s) — aucune coupure réseau : %s",
+        path, err.kind, str(err)[:160]
+    )
+    try:
+        db.insert_api_error(int(now), err.kind, "resolu_au_retry", f"{path}: {err}")
+    except Exception as e:
+        log.debug("Trace du ré-essai impossible : %s", e)
+
+
+def fbx_get(path, timeout=10, base=None, retry=True):
+    """GET sur l'API locale, avec un ré-essai immédiat sur raté transitoire.
+
+    Sur échec DNS, le ré-essai tape directement l'IP de la box mise en cache
+    (_resolve_fbx_ip) pour contourner le résolveur défaillant. Si le ré-essai
+    échoue aussi, l'erreur est propagée telle quelle : on ne fabrique jamais de
+    valeur, un trou réel reste un trou."""
+    had_token = _session_token is not None
+    try:
+        return _fbx_get_once(path, timeout, base)
+    except FbxError as e:
+        err = e
+        if not retry or not _is_transient(err, had_token):
+            raise
+
+    retry_base = base
+    if err.kind == "dns" and base is None:
+        ip = _resolve_fbx_ip()
+        if ip:
+            retry_base = f"http://{ip}"
+
+    result = _fbx_get_once(path, min(timeout, FBX_RETRY_TIMEOUT), retry_base)
+    _note_retry_healed(path, err)
+    return result
 
 
 # ──────────────────────────────────────────────
@@ -460,7 +563,7 @@ def collect_switch():
             return []
         return list(_executor.map(_port_with_stats, ports))
     except Exception as e:
-        log.warning("collect_switch: %s", e)
+        _warn_once("switch", "collect_switch: %s", e)
         return []
 
 
@@ -504,7 +607,7 @@ def collect_storage():
             })
         return {"disks": disks_out, "partitions": parts_out}
     except Exception as e:
-        log.warning("collect_storage: %s", e)
+        _warn_once("storage", "collect_storage: %s", e)
         return {"disks": [], "partitions": []}
 
 
@@ -595,7 +698,12 @@ def _collect_connection_resilient():
     Retourne (conn_dict, api_error|None). `conn_dict["state"]` ne vaut "down"
     que si une vraie perte de connectivité a été confirmée : sinon on reporte le
     dernier état réellement lu sur la box, pour ne pas fabriquer de fausse
-    coupure ni dégrader le calcul de disponibilité."""
+    coupure ni dégrader le calcul de disponibilité.
+
+    Le ré-essai immédiat (étape 1 historique) a migré dans fbx_get, qui en fait
+    bénéficier tous les endpoints : arriver ici signifie donc que l'appel a DÉJÀ
+    échoué deux fois. Ne reste ici que ce qui est propre à la connexion — la
+    corroboration ICMP, qui décide s'il s'agit d'une vraie coupure."""
     global _last_api_state
     try:
         conn = collect_connection()
@@ -605,22 +713,7 @@ def _collect_connection_resilient():
         err  = e1 if isinstance(e1, FbxError) else _classify_request_exc(e1)
         kind = err.kind
 
-        # 1) Ré-essai immédiat, timeout court. La majorité de ces échecs sont des
-        #    ratés transitoires (paquet SYN perdu, résolution DNS momentanée).
-        #    Sur échec DNS, on retente directement sur l'IP en cache de la box.
-        base = None
-        if kind == "dns":
-            ip = _resolve_fbx_ip()
-            if ip:
-                base = f"http://{ip}"
-        try:
-            conn = collect_connection(timeout=FBX_RETRY_TIMEOUT, base=base)
-            _last_api_state = conn.get("state") or _last_api_state
-            return conn, {"kind": kind, "outcome": "resolu_au_retry", "detail": str(err)}
-        except Exception as e2:
-            err = e2 if isinstance(e2, FbxError) else _classify_request_exc(e2)
-
-        # 2) Deux échecs de suite : on tranche avec une sonde ICMP indépendante.
+        # 2) Appel ET ré-essai en échec : on tranche avec une sonde ICMP indépendante.
         box_ok, box_lat, net_ok = _corroborate_network()
 
         if box_ok:
@@ -658,6 +751,11 @@ def collect():
     try:
         m["system"] = collect_system()
     except Exception as e:
+        # Échec confirmé (appel + ré-essai de fbx_get) : les sondes de ce cycle
+        # sont inconnues et partent en NULL — on ne fabrique pas de valeur. Mais
+        # on le TRACE : c'était l'angle mort qui rendait les trous de
+        # température invisibles dans le journal.
+        _warn_once("system", "collect_system: %s", e)
         m["system"] = {"error": str(e)}
     m["connection"], m["api_error"] = _collect_connection_resilient()
     m["ftth"] = collect_ftth()
