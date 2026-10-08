@@ -679,6 +679,21 @@ header{display:flex;align-items:center;justify-content:space-between;
     <div style="position:relative;height:130px"><canvas id="chart-ping"></canvas></div>
     <div id="ping-history-stats" style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--muted)"></div>
   </div>
+
+  <!-- Historique ping dédié routeur (Freebox) -->
+  <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px">
+      <span class="card-title" style="margin:0">Historique ping — Routeur (Freebox)</span>
+      <select id="ping-history-box-window" style="padding:4px 8px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;cursor:pointer">
+        <option value="600">10 min</option>
+        <option value="1800" selected>30 min</option>
+        <option value="3600">1 heure</option>
+        <option value="21600">6 heures</option>
+      </select>
+    </div>
+    <div style="position:relative;height:130px"><canvas id="chart-ping-box"></canvas></div>
+    <div id="ping-history-box-stats" style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--muted)"></div>
+  </div>
 </div>
 
 <!-- ═══════════════════════════════════════════
@@ -956,28 +971,32 @@ const tempChart = new Chart(document.getElementById('chart-temp'),{
   options:{...cDef, scales:{...cDef.scales, y:{...cDef.scales.y, suggestedMax:90}}}
 });
 
-const pingChart = new Chart(document.getElementById('chart-ping'),{
-  type:'bar',
-  data:{labels:[],datasets:[{
-    label:'Latence (ms)',data:[],backgroundColor:[],
-    borderWidth:0,barPercentage:1,categoryPercentage:1
-  }]},
-  options:{
-    responsive:true,maintainAspectRatio:false,animation:{duration:200},
-    plugins:{legend:{display:false},tooltip:{callbacks:{
-      label:ctx=>{
-        const v=ctx.parsed.y;
-        if(v===0&&ctx.dataset.backgroundColor[ctx.dataIndex]==='#fc8181') return 'Perdu';
-        return v.toFixed(1)+' ms';
+function _makePingChart(canvasId){
+  return new Chart(document.getElementById(canvasId),{
+    type:'bar',
+    data:{labels:[],datasets:[{
+      label:'Latence (ms)',data:[],backgroundColor:[],
+      borderWidth:0,barPercentage:1,categoryPercentage:1
+    }]},
+    options:{
+      responsive:true,maintainAspectRatio:false,animation:{duration:200},
+      plugins:{legend:{display:false},tooltip:{callbacks:{
+        label:ctx=>{
+          const v=ctx.parsed.y;
+          if(v===0&&ctx.dataset.backgroundColor[ctx.dataIndex]==='#fc8181') return 'Perdu';
+          return v.toFixed(1)+' ms';
+        }
+      }}},
+      scales:{
+        x:{ticks:{color:'#718096',maxTicksLimit:8,font:{size:10}},grid:{display:false}},
+        y:{ticks:{color:'#718096',font:{size:10}},grid:{color:'#2a2d3a'},beginAtZero:true,
+           title:{display:true,text:'ms',color:'#718096',font:{size:10}}}
       }
-    }}},
-    scales:{
-      x:{ticks:{color:'#718096',maxTicksLimit:8,font:{size:10}},grid:{display:false}},
-      y:{ticks:{color:'#718096',font:{size:10}},grid:{color:'#2a2d3a'},beginAtZero:true,
-         title:{display:true,text:'ms',color:'#718096',font:{size:10}}}
     }
-  }
-});
+  });
+}
+const pingChart = _makePingChart('chart-ping');
+const pingBoxChart = _makePingChart('chart-ping-box');
 
 // ─────────────────────────────────────────
 // Update UI from metrics
@@ -1281,12 +1300,14 @@ function updateStorage(st){
 // ─────────────────────────────────────────
 // Ping history
 // ─────────────────────────────────────────
-function updatePingHistory(rows){
+function updatePingHistory(rows, chart, statsElId){
+  chart = chart || pingChart;
+  statsElId = statsElId || 'ping-history-stats';
   if(!rows||!rows.length){
-    pingChart.data.labels=[];
-    pingChart.data.datasets[0].data=[];
-    pingChart.data.datasets[0].backgroundColor=[];
-    pingChart.update('none');
+    chart.data.labels=[];
+    chart.data.datasets[0].data=[];
+    chart.data.datasets[0].backgroundColor=[];
+    chart.update('none');
     return;
   }
   const labels=[],heights=[],colors=[];
@@ -1305,16 +1326,16 @@ function updatePingHistory(rows){
       colors.push(ms<20?'#48bb78':ms<50?'#4299e1':ms<150?'#ed8936':'#fc8181');
     }
   });
-  pingChart.data.labels=labels;
-  pingChart.data.datasets[0].data=heights;
-  pingChart.data.datasets[0].backgroundColor=colors;
-  pingChart.update('none');
+  chart.data.labels=labels;
+  chart.data.datasets[0].data=heights;
+  chart.data.datasets[0].backgroundColor=colors;
+  chart.update('none');
   const total=rows.length;
   const lostPct=total>0?(lostCount/total*100).toFixed(1):0;
   const avgLat=validMs.length?(validMs.reduce((a,b)=>a+b,0)/validMs.length).toFixed(1):null;
   const maxLat=validMs.length?Math.max(...validMs).toFixed(1):null;
   const c=+lostPct>5?'var(--red)':+lostPct>1?'var(--orange)':'var(--green)';
-  const el=document.getElementById('ping-history-stats');
+  const el=document.getElementById(statsElId);
   if(el) el.innerHTML=
     `<span>Perdus: <strong style="color:${c}">${lostPct}% (${lostCount}/${total})</strong></span>`+
     (avgLat?`<span>Moy: <strong>${avgLat} ms</strong></span>`:'')  +
@@ -1330,10 +1351,20 @@ async function fetchPingHistory(){
   const w=document.getElementById('ping-history-window');
   const s=w?w.value:1800;
   try{
-    const r=await fetch('/api/ping-history?seconds='+s);
+    const r=await fetch('/api/ping-history?seconds='+s+'&target=external');
     const d=await r.json();
-    updatePingHistory(d);
+    updatePingHistory(d, pingChart, 'ping-history-stats');
   }catch(e){ console.error('fetchPingHistory',e); }
+}
+
+async function fetchPingHistoryBox(){
+  const w=document.getElementById('ping-history-box-window');
+  const s=w?w.value:1800;
+  try{
+    const r=await fetch('/api/ping-history?seconds='+s+'&target=box');
+    const d=await r.json();
+    updatePingHistory(d, pingBoxChart, 'ping-history-box-stats');
+  }catch(e){ console.error('fetchPingHistoryBox',e); }
 }
 
 // ─────────────────────────────────────────
@@ -1686,6 +1717,7 @@ async function slowRefresh(){
   } catch(e){ console.error('slowRefresh',e); }
   doPing(false);
   fetchPingHistory();
+  fetchPingHistoryBox();
 }
 
 // ─────────────────────────────────────────
@@ -1850,6 +1882,8 @@ function toggleTilePanel(){
   if(resetDay) resetDay.max=new Date().toISOString().slice(0,10);
   const phw=document.getElementById('ping-history-window');
   if(phw) phw.addEventListener('change',()=>fetchPingHistory());
+  const phbw=document.getElementById('ping-history-box-window');
+  if(phbw) phbw.addEventListener('change',()=>fetchPingHistoryBox());
   _bind('btn-reset-day',        ()=>resetOutageDay());
   _bind('btn-open-report',      ()=>openReport());
   _bind('btn-close-report',     ()=>document.getElementById('report-modal').classList.remove('open'));

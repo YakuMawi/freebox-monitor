@@ -793,13 +793,23 @@ def insert_ping_log(ts: int, host: str, latency_ms, lost: int):
         )
 
 
-def get_ping_history(seconds: int = 1800) -> list:
+def get_ping_history(seconds: int = 1800, host: str = None) -> list:
+    """Historique de ping_log sur la fenêtre donnée. `host` filtre sur une
+    cible précise (ex: 'box' pour le ping dédié routeur) ; sans filtre,
+    retourne toutes les cibles confondues (comportement historique)."""
     since = int((datetime.now() - timedelta(seconds=seconds)).timestamp())
     with _conn() as c:
-        rows = c.execute(
-            "SELECT ts, host, latency_ms, lost FROM ping_log WHERE ts >= ? ORDER BY ts ASC",
-            (since,)
-        ).fetchall()
+        if host:
+            rows = c.execute(
+                "SELECT ts, host, latency_ms, lost FROM ping_log "
+                "WHERE ts >= ? AND host = ? ORDER BY ts ASC",
+                (since, host)
+            ).fetchall()
+        else:
+            rows = c.execute(
+                "SELECT ts, host, latency_ms, lost FROM ping_log WHERE ts >= ? ORDER BY ts ASC",
+                (since,)
+            ).fetchall()
     return [dict(r) for r in rows]
 
 

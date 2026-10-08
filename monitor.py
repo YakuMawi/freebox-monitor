@@ -621,6 +621,7 @@ def collect_storage():
 FBX_RETRY_TIMEOUT = 4          # timeout court pour le ré-essai immédiat
 PING_CORROBORATE_MAX_AGE = 30  # âge max d'un ping de ping_log réutilisable
 _FBX_IP_TTL = 300
+PING_HOST_BOX = "box"          # valeur de ping_log.host pour le ping dédié routeur
 
 _fbx_ip        = None
 _fbx_ip_time   = 0.0
@@ -904,6 +905,19 @@ def _bg_ping():
         db.insert_ping_log(ts, host, None, 1)
 
 
+def _bg_ping_box():
+    """Ping ICMP dédié vers la box, enregistré séparément dans ping_log sous
+    host=PING_HOST_BOX. Cible volontairement l'IP mise en cache par
+    _resolve_fbx_ip() plutôt que le hostname `mafreebox.freebox.fr` : ce signal
+    doit rester un historique continu, indépendant des ratés connus de la
+    résolution DNS, pour pouvoir corréler après coup les erreurs api_errors
+    (vraie coupure réseau vs simple hoquet du chemin vers l'IP publique)."""
+    ip = _resolve_fbx_ip()
+    ts = int(datetime.now().timestamp())
+    ok, lat = _ping_once(ip, timeout_s=1)
+    db.insert_ping_log(ts, PING_HOST_BOX, lat if ok else None, 0 if ok else 1)
+
+
 def _fetch_external_ip() -> str:
     for url in ("https://api.ipify.org", "https://ipecho.net/plain"):
         try:
@@ -981,6 +995,7 @@ def background_loop():
             # timeout) : déportée dans le pool partagé pour ne jamais retarder le cycle.
             _executor.submit(_safe_check_external_ip)
             _executor.submit(_bg_ping)
+            _executor.submit(_bg_ping_box)
 
             # Weekly prune
             now = time.time()
@@ -1503,8 +1518,16 @@ def route_storage():
 @app.route("/api/ping-history")
 @login_required
 def route_ping_history():
+    """`target=box` renvoie l'historique dédié du ping ICMP vers la box
+    (host=PING_HOST_BOX). Par défaut (`external`, ou absent), renvoie
+    l'historique existant — toutes les cibles sauf la box — pour ne pas
+    changer le comportement de l'ancien appel sans paramètre."""
     seconds = _int_arg("seconds", 1800, minimum=1, maximum=86400)
-    return jsonify(db.get_ping_history(seconds))
+    target = request.args.get("target", "external").strip().lower()
+    if target == "box":
+        return jsonify(db.get_ping_history(seconds, host=PING_HOST_BOX))
+    rows = [r for r in db.get_ping_history(seconds) if r.get("host") != PING_HOST_BOX]
+    return jsonify(rows)
 
 
 @app.route("/api/ping")
