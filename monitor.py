@@ -515,6 +515,22 @@ def collect_connection(timeout=10, base=None):
 # message d'une erreur donnée, puis en DEBUG tant qu'il ne change pas.
 _last_warn = {}
 
+# Mode LAN de la Freebox ("router" ou "bridge", champ `mode` de /lan/config/).
+# Un utilisateur peut faire piloter le WAN par un routeur tiers (PPPoE/DHCP)
+# et faire "ponter" la Freebox — vérifié empiriquement sur une box en mode
+# bridge le 2026-10-09 : /lan/config/ expose mode="bridge" (vs "router" par
+# défaut), et /dhcp/config/ renvoie une erreur explicite ("Ce réglage n'est
+# disponible qu'en mode routeur"). En revanche /connection/ reste TOUT À FAIT
+# fonctionnel en bridge : state/ipv4/rate_down continuent de refléter en direct
+# le trafic qui transite par la box (vérifié : bytes_down progresse, ipv4
+# reste une IP publique stable) — seul le champ `type` devient générique
+# ("ethernet" au lieu d'une valeur liée à la techno FTTH), la box n'étant plus
+# elle-même responsable de la négociation IP. Ce réglage ne change quasiment
+# jamais : mise en cache de plusieurs minutes, pas de vérification à chaque
+# cycle de 10 s.
+_LAN_MODE_TTL = 300  # 5 min
+_lan_mode_cache = {"mode": None, "time": 0.0}
+
 
 def _warn_once(key: str, fmt: str, *args):
     msg = fmt % args
@@ -542,6 +558,32 @@ def collect_ftth():
         # fois, mais plus jamais avalé en silence.
         _warn_once("ftth", "collect_ftth: %s", e)
         return None
+
+
+def collect_lan_mode(force=False):
+    """Mode LAN de la Freebox : "router" (par défaut, la box route le WAN) ou
+    "bridge" (un routeur tiers gère le WAN, la box se contente de ponter la
+    ligne). Voir le commentaire au-dessus de `_lan_mode_cache` pour le détail
+    empirique des champs d'API concernés.
+
+    Mis en cache `_LAN_MODE_TTL` secondes : ce réglage ne change pour ainsi
+    dire jamais, inutile de le vérifier à chaque cycle de 10 s. Sur échec de
+    l'appel, on garde la dernière valeur connue plutôt que de fabriquer
+    "router" par défaut sur un simple raté réseau ponctuel."""
+    now = time.time()
+    if not force and _lan_mode_cache["mode"] is not None and (now - _lan_mode_cache["time"]) < _LAN_MODE_TTL:
+        return _lan_mode_cache["mode"]
+    try:
+        cfg = fbx_get("/lan/config/")
+        mode = cfg.get("mode") or "router"
+        if mode != _lan_mode_cache["mode"]:
+            log.info("Mode LAN de la Freebox : %s", mode)
+        _lan_mode_cache["mode"] = mode
+        _lan_mode_cache["time"] = now
+        return mode
+    except Exception as e:
+        _warn_once("lan_mode", "collect_lan_mode: %s", e)
+        return _lan_mode_cache["mode"]
 
 
 # NB: l'API locale Freebox (v8) n'expose pas d'endpoint batch pour récupérer en un
@@ -849,6 +891,7 @@ def collect():
     m["connection"], m["api_error"] = _collect_connection_resilient()
     m["ftth"] = collect_ftth()
     m["lan"]  = collect_lan()
+    m["lan_mode"] = collect_lan_mode()
     return m
 
 
@@ -949,6 +992,20 @@ def _is_global_ip(ip: str) -> bool:
         return False
 
 
+def _freebox_ip_unavailable_reason() -> str:
+    """Suffixe de log expliquant pourquoi `freebox_ip` est indisponible : lit le
+    mode LAN déjà en cache (collect_lan_mode), sans appel API supplémentaire.
+    En mode bridge c'est attendu (routeur tiers côté WAN) ; en mode routeur
+    (le cas par défaut) c'est une anomalie à surveiller — le message le dit
+    explicitement pour ne pas confondre les deux."""
+    mode = _lan_mode_cache.get("mode")
+    if mode == "bridge":
+        return " — attendu : Freebox en mode bridge"
+    if mode == "router":
+        return " — ANORMAL en mode routeur, à investiguer"
+    return ""
+
+
 def _check_external_ip():
     """Surveille l'IP publique et n'alerte que sur un VRAI changement d'IP WAN.
 
@@ -1013,13 +1070,13 @@ def _check_external_ip():
             else:
                 log.info(
                     "IP de sortie de la machine (ipify) : %s → %s (IP Freebox "
-                    "indisponible — repli sur ipify pour la détection)",
-                    prev_ext, ext_ip
+                    "indisponible%s — repli sur ipify pour la détection)",
+                    prev_ext, ext_ip, _freebox_ip_unavailable_reason()
                 )
     elif not freebox_ip:
         log.warning(
-            "Contrôle d'IP impossible (ipify muet et IP Freebox indisponible) ; "
-            "nouvel essai dans %d s", EXTERNAL_IP_CHECK_INTERVAL
+            "Contrôle d'IP impossible (ipify muet et IP Freebox indisponible%s) ; "
+            "nouvel essai dans %d s", _freebox_ip_unavailable_reason(), EXTERNAL_IP_CHECK_INTERVAL
         )
         return
 
@@ -1027,7 +1084,7 @@ def _check_external_ip():
     if freebox_ip:
         ref_ip, source = freebox_ip, "API locale Freebox"
     else:
-        ref_ip, source = ext_ip, "ipify (IP Freebox indisponible)"
+        ref_ip, source = ext_ip, "ipify (IP Freebox indisponible%s)" % _freebox_ip_unavailable_reason()
     if not ref_ip:
         return
 
@@ -1619,6 +1676,7 @@ def route_metrics():
 def route_external_ip():
     with _lock:
         freebox_ip = _metrics.get("connection", {}).get("ipv4", "") or ""
+        lan_mode   = _metrics.get("lan_mode") or _lan_mode_cache.get("mode")
     ext_ip     = _last_external_ip or ""
     checked_at = _last_external_ip_check or None
     return jsonify({
@@ -1626,6 +1684,10 @@ def route_external_ip():
         "external_ip": ext_ip,
         "same": bool(freebox_ip and ext_ip and freebox_ip == ext_ip),
         "checked_at": int(checked_at) if checked_at else None,
+        # Mode LAN de la Freebox ("router"/"bridge") — voir collect_lan_mode().
+        # Additif : permet à la tuile "IPs publiques" d'afficher une note en
+        # mode bridge sans devoir parser tout /api/metrics.
+        "lan_mode": lan_mode or "router",
         # Diagnostic : IP WAN de référence des alertes et candidate éventuelle en
         # cours de debounce (cf. _check_external_ip). Champs purement additifs.
         "wan_ip": _last_wan_ip or None,

@@ -430,7 +430,7 @@ header{display:flex;align-items:center;justify-content:space-between;
     <div class="metric-icon">💻</div>
     <div class="metric-value vc-purple" id="active-hosts">—</div>
     <div class="metric-label">Appareils connectés</div>
-    <div class="metric-sub">réseau local</div>
+    <div class="metric-sub" id="active-hosts-sub">réseau local</div>
   </div>
 
   <div class="card metric-card">
@@ -446,7 +446,7 @@ header{display:flex;align-items:center;justify-content:space-between;
      IP MONITOR
 ═══════════════════════════════════════════ -->
 <div class="tile-section card" id="tile-ip">
-  <div class="card-title">🌐 Adresses IP publiques</div>
+  <div class="card-title">🌐 Adresses IP publiques <span class="badge bo" id="bridge-badge-ip" style="display:none" title="La Freebox est en mode bridge : cette IP est celle vue en transit par la box, pas négociée par elle.">🌉 Mode bridge</span></div>
   <div class="ip-monitor">
 
     <div class="ip-block" id="ip-block-freebox">
@@ -455,7 +455,7 @@ header{display:flex;align-items:center;justify-content:space-between;
         IP Freebox (opérateur)
       </div>
       <div class="ip-addr" id="ip-freebox-addr">—</div>
-      <div class="ip-source">Rapportée par l'API Freebox</div>
+      <div class="ip-source" id="ip-freebox-source">Rapportée par l'API Freebox</div>
     </div>
 
     <div class="ip-sep">
@@ -542,7 +542,7 @@ header{display:flex;align-items:center;justify-content:space-between;
   </div>
 
   <div class="card">
-    <div class="card-title">Connexion</div>
+    <div class="card-title">Connexion <span class="badge bo" id="bridge-badge" style="display:none" title="Un routeur tiers gère le WAN (PPPoE/DHCP) ; la Freebox se contente de ponter la ligne.">🌉 Mode bridge</span></div>
     <div class="info-row"><span class="info-key">Statut</span><span class="info-val" id="conn-state">—</span></div>
     <div class="info-row"><span class="info-key">Type / Média</span><span class="info-val" id="conn-type">—</span></div>
     <div class="info-row"><span class="info-key">IPv4 Freebox</span><span class="info-val" id="conn-ipv4">—</span></div>
@@ -552,6 +552,9 @@ header{display:flex;align-items:center;justify-content:space-between;
     <div class="info-row"><span class="info-key">Bande passante ↑</span><span class="info-val" id="conn-bw-u">—</span></div>
     <div class="info-row"><span class="info-key">Total ↓</span><span class="info-val" id="conn-bytes-d">—</span></div>
     <div class="info-row"><span class="info-key">Total ↑</span><span class="info-val" id="conn-bytes-u">—</span></div>
+    <div class="info-row" id="bridge-note-row" style="display:none;border-bottom:none">
+      <span class="info-key" style="color:var(--muted);font-size:11px;line-height:1.4">Freebox en mode bridge : le routeur tiers négocie le WAN (PPPoE/DHCP). Le type de connexion ci-dessus perd son sens habituel ; l'IPv4/état restent fiables (trafic ponté visible par la box).</span>
+    </div>
   </div>
 
   <div class="card">
@@ -1049,6 +1052,7 @@ function updateUI(m){
   const ftth = m.ftth;
   const sens = sys.sensors||{};
   const fans = sys.fans||{};
+  const isBridge = m.lan_mode === 'bridge';
 
   // Error banner
   const eb = document.getElementById('error-banner');
@@ -1086,7 +1090,12 @@ function updateUI(m){
 
   setText('fan-main',  (sys.fan0_speed||0)+(sys.fan0_speed?' RPM':'—'));
   setText('fan2-sub',  'Fan 2: '+(sys.fan1_speed?sys.fan1_speed+' RPM':'—'));
-  setText('active-hosts', lan.active_hosts??'—');
+  const activeHostsUnknown = lan.active_hosts === '?';
+  setText('active-hosts', activeHostsUnknown ? '—' : (lan.active_hosts??'—'));
+  const ahSub = document.getElementById('active-hosts-sub');
+  if(ahSub) ahSub.textContent = (activeHostsUnknown && isBridge)
+    ? "indisponible en mode bridge (pas de bail DHCP sur la box)"
+    : 'réseau local';
   const utEl = document.getElementById('uptime-tile');
   if(utEl){ utEl.textContent=sys.uptime||'—'; }
   setText('firmware-sub','firmware '+(sys.firmware||'—'));
@@ -1099,8 +1108,13 @@ function updateUI(m){
   setText('sys-hdd0',   (sys.temp_hdd0?sys.temp_hdd0+'°C':'—'));
 
   // Connection
+  const bridgeBadge = document.getElementById('bridge-badge');
+  if(bridgeBadge) bridgeBadge.style.display = isBridge ? 'inline-block' : 'none';
+  const bridgeNoteRow = document.getElementById('bridge-note-row');
+  if(bridgeNoteRow) bridgeNoteRow.style.display = isBridge ? 'flex' : 'none';
+
   setHTML('conn-state', badge(conn.state==='up','Connecté',conn.state||'—'));
-  setText('conn-type',    (conn.type||'—')+(conn.media?' / '+conn.media:''));
+  setText('conn-type',    (conn.type||'—')+(conn.media?' / '+conn.media:'')+(isBridge?' (pontée)':''));
   setText('conn-ipv4',    conn.ipv4||'—');
   setText('conn-ext-ip',  m.external_ip||'—');
   setText('conn-ipv6',    conn.ipv6||'—');
@@ -1649,7 +1663,8 @@ function _fmtAgo(ts){
   return 'il y a '+Math.floor(s/3600)+' h';
 }
 
-function _updateIPDisplay(fbIp, extIp){
+function _updateIPDisplay(fbIp, extIp, lanMode){
+  const isBridge = lanMode === 'bridge';
   const fbEl = document.getElementById('ip-freebox-addr');
   const wnEl = document.getElementById('ip-wan-addr');
   if(fbEl) fbEl.textContent = fbIp || '—';
@@ -1659,6 +1674,13 @@ function _updateIPDisplay(fbIp, extIp){
   const wnBlk = document.getElementById('ip-block-wan');
   if(fbBlk) fbBlk.classList.toggle('active', !!fbIp);
   if(wnBlk) wnBlk.classList.toggle('active', !!extIp);
+
+  const badgeIp = document.getElementById('bridge-badge-ip');
+  if(badgeIp) badgeIp.style.display = isBridge ? 'inline-block' : 'none';
+  const srcEl = document.getElementById('ip-freebox-source');
+  if(srcEl) srcEl.textContent = isBridge
+    ? "Rapportée par l'API Freebox (box en mode bridge — IP vue en transit, pas négociée par elle)"
+    : "Rapportée par l'API Freebox";
 
   const bar  = document.getElementById('ip-status-bar');
   const icon = document.getElementById('ip-status-icon');
@@ -1670,7 +1692,9 @@ function _updateIPDisplay(fbIp, extIp){
     txt.textContent='Récupération des adresses IP...';
   } else if(fbIp === extIp){
     bar.className='ip-status same'; icon.textContent='✓';
-    txt.textContent='IPs identiques — trafic sortant directement via la Freebox';
+    txt.textContent=isBridge
+      ? 'IPs identiques — trafic sortant via la ligne pontée par la Freebox'
+      : 'IPs identiques — trafic sortant directement via la Freebox';
   } else {
     bar.className='ip-status diff'; icon.textContent='⚠';
     txt.textContent='IPs différentes — la machine de monitoring sort via un autre lien (5G, routeur NAT…)';
@@ -1686,7 +1710,7 @@ async function fetchIPStatus(){
     if(!r.ok) throw new Error('HTTP '+r.status);
     const d = await r.json();
     _serverWanTs = d.checked_at || 0;
-    _updateIPDisplay(d.freebox_ip || '', d.external_ip || '');
+    _updateIPDisplay(d.freebox_ip || '', d.external_ip || '', d.lan_mode || 'router');
   }catch(e){ console.warn('[IPMonitor] Contrôle des IP impossible', e); }
 }
 
