@@ -118,7 +118,26 @@ _last_external_ip       = ""   # IP de sortie de cette machine (via ipify)
 _last_external_ip_check = 0.0  # timestamp du dernier contrôle
 _last_prune             = 0
 
+# IP WAN de référence pour les alertes (cf. _check_external_ip) : l'IP assignée
+# par l'opérateur à la Freebox, lue sur son API locale — PAS l'IP de sortie de
+# cette machine.
+_last_wan_ip            = ""   # dernière IP WAN confirmée (référence des alertes)
+_pending_wan_ip         = ""   # IP WAN candidate en cours de confirmation (debounce)
+_pending_wan_ip_since   = 0.0  # 1re observation de la candidate
+_pending_wan_ip_count   = 0    # contrôles consécutifs la confirmant
+
 EXTERNAL_IP_CHECK_INTERVAL = 30  # secondes entre deux vérifications de l'IP de sortie de cette machine
+
+# Un vrai changement d'IP WAN opérateur est durable. En revanche, chaque bascule
+# du routeur entre sa liaison principale (SFP+ WAN1) et son secours (WAN/LAN4)
+# change le CHEMIN DE SORTIE de cette machine pendant quelques dizaines de
+# secondes seulement : l'IP vue par ipify oscillait alors entre deux valeurs
+# (observé : aller-retour en 35-40 s, plusieurs fois par heure), ce qui générait
+# des dizaines de fausses alertes « changement d'IP » par jour. Une IP candidate
+# doit donc tenir plusieurs contrôles consécutifs ET une durée minimale — tous
+# deux largement au-delà de la durée des oscillations observées.
+IP_CHANGE_CONFIRM_CHECKS  = 3    # contrôles consécutifs avec la même nouvelle IP
+IP_CHANGE_CONFIRM_SECONDS = 150  # ... et au moins ce délai depuis la 1re observation
 _test_mode_active  = False
 
 # Pool de threads partagé et borné, réutilisé pour toutes les tâches ponctuelles
@@ -922,34 +941,149 @@ def process_connectivity(conn_state: str, ts: int):
     _last_conn_state = conn_state
 
 
+def _is_global_ip(ip: str) -> bool:
+    try:
+        return ipaddress.ip_address(ip).is_global
+    except Exception:
+        return False
+
+
 def _check_external_ip():
-    """Vérifie l'IP publique réelle via un service externe et envoie une alerte si elle change."""
+    """Surveille l'IP publique et n'alerte que sur un VRAI changement d'IP WAN.
+
+    Deux signaux distincts, qu'il ne faut surtout pas confondre :
+
+    * `freebox_ip` — champ `ipv4` de /connection/ lu sur l'API locale de la box :
+      l'IP réellement assignée par l'opérateur à la Freebox. C'est « mon IP » au
+      sens de l'utilisateur, et le seul signal fiable d'un changement côté FAI.
+      Fiable depuis le basculement des appels API sur l'IP LAN (`freebox_lan_ip`).
+    * `ext_ip` — IP vue par ipify/ipecho depuis CE process : elle dépend du
+      chemin de sortie de la machine à l'instant T. Le routeur bascule
+      fréquemment entre sa liaison principale (SFP+ WAN1) et son secours
+      (WAN/LAN4) ; à chaque bascule cette IP change pendant ~30-40 s puis revient
+      à la précédente, sans que l'IP WAN de la box n'ait bougé. C'était la source
+      des dizaines de fausses alertes « changement d'IP » constatées.
+
+    L'alerte est donc pilotée par `freebox_ip` dès qu'il est disponible, jamais
+    par la seule oscillation d'ipify, et toujours derrière un debounce
+    (IP_CHANGE_CONFIRM_CHECKS / IP_CHANGE_CONFIRM_SECONDS) : une IP candidate
+    doit tenir plusieurs contrôles consécutifs avant de déclencher un email.
+    Si `freebox_ip` est indisponible, on retombe sur `ext_ip` — mais alors
+    uniquement derrière ce même debounce, qui absorbe les oscillations.
+
+    `ext_ip` continue d'être collecté et exposé tel quel à l'UI (tuile « IPs
+    publiques ») : l'écart entre les deux IP y est une information légitime
+    (règle de routage 5G active, liaison de secours en cours d'usage…).
+    """
     global _last_external_ip, _last_external_ip_check
+    global _last_wan_ip, _pending_wan_ip, _pending_wan_ip_since, _pending_wan_ip_count
 
     now = time.time()
     if now - _last_external_ip_check < EXTERNAL_IP_CHECK_INTERVAL:
         return
     _last_external_ip_check = now
 
-    ip = _fetch_external_ip()
-    if not ip:
-        log.warning("Contrôle de l'IP de sortie impossible ; nouvel essai dans %d s", EXTERNAL_IP_CHECK_INTERVAL)
+    ext_ip = _fetch_external_ip()
+    with _lock:
+        freebox_ip = (_metrics.get("connection") or {}).get("ipv4", "") or ""
+    if not _is_global_ip(freebox_ip):
+        freebox_ip = ""
+
+    # 1) Suivi du chemin de sortie de la machine : informatif pour l'UI et les
+    #    logs, mais JAMAIS une alerte à lui seul.
+    prev_ext = _last_external_ip
+    if ext_ip:
+        _last_external_ip = ext_ip
+        if ext_ip != prev_ext:
+            db.set_config("monitor_external_ip_last", ext_ip)
+            if not prev_ext:
+                log.info("IP de sortie initiale de la machine (ipify) : %s", ext_ip)
+            elif freebox_ip and freebox_ip != ext_ip:
+                log.info(
+                    "Changement de chemin de sortie machine (ipify) : %s → %s — "
+                    "IP Freebox stable (%s), pas d'alerte envoyée",
+                    prev_ext, ext_ip, freebox_ip
+                )
+            elif freebox_ip:
+                log.info(
+                    "Chemin de sortie machine (ipify) revenu sur l'IP Freebox : "
+                    "%s → %s, pas d'alerte envoyée", prev_ext, ext_ip
+                )
+            else:
+                log.info(
+                    "IP de sortie de la machine (ipify) : %s → %s (IP Freebox "
+                    "indisponible — repli sur ipify pour la détection)",
+                    prev_ext, ext_ip
+                )
+    elif not freebox_ip:
+        log.warning(
+            "Contrôle d'IP impossible (ipify muet et IP Freebox indisponible) ; "
+            "nouvel essai dans %d s", EXTERNAL_IP_CHECK_INTERVAL
+        )
         return
 
-    prev = _last_external_ip or db.get_config("monitor_external_ip_last", "")
-    _last_external_ip = ip
-    if ip == prev:
-        return
-    db.set_config("monitor_external_ip_last", ip)
-    if not prev:
-        log.info("IP de sortie initiale de la machine : %s", ip)
+    # 2) Signal de référence pour l'alerte : la Freebox d'abord.
+    if freebox_ip:
+        ref_ip, source = freebox_ip, "API locale Freebox"
+    else:
+        ref_ip, source = ext_ip, "ipify (IP Freebox indisponible)"
+    if not ref_ip:
         return
 
-    log.info("Changement d'IP de sortie de la machine : %s → %s", prev, ip)
+    last = _last_wan_ip or db.get_config("monitor_wan_ip_last", "")
+    if not last:
+        _last_wan_ip = ref_ip
+        db.set_config("monitor_wan_ip_last", ref_ip)
+        log.info("IP WAN initiale (source : %s) : %s", source, ref_ip)
+        return
+    _last_wan_ip = last
+
+    if ref_ip == last:
+        if _pending_wan_ip:
+            log.info(
+                "IP WAN candidate %s abandonnée : retour à %s avant confirmation "
+                "(%d contrôle(s), %.0f s) — aucune alerte envoyée",
+                _pending_wan_ip, last, _pending_wan_ip_count, now - _pending_wan_ip_since
+            )
+            _pending_wan_ip, _pending_wan_ip_since, _pending_wan_ip_count = "", 0.0, 0
+        return
+
+    # 3) Nouvelle IP WAN candidate : debounce avant toute alerte.
+    if ref_ip != _pending_wan_ip:
+        _pending_wan_ip       = ref_ip
+        _pending_wan_ip_since = now
+        _pending_wan_ip_count = 1
+    else:
+        _pending_wan_ip_count += 1
+
+    elapsed = now - _pending_wan_ip_since
+    if _pending_wan_ip_count < IP_CHANGE_CONFIRM_CHECKS or elapsed < IP_CHANGE_CONFIRM_SECONDS:
+        log.info(
+            "IP WAN candidate %s → %s (source : %s) en attente de confirmation "
+            "(%d/%d contrôles, %.0f/%d s) — aucune alerte pour l'instant",
+            last, ref_ip, source, _pending_wan_ip_count, IP_CHANGE_CONFIRM_CHECKS,
+            elapsed, IP_CHANGE_CONFIRM_SECONDS
+        )
+        return
+
+    # 4) Confirmé : l'IP tient depuis assez longtemps pour être un vrai changement.
+    _pending_wan_ip, _pending_wan_ip_since, _pending_wan_ip_count = "", 0.0, 0
+    _last_wan_ip = ref_ip
+    db.set_config("monitor_wan_ip_last", ref_ip)
+    if not ext_ip:
+        corrob = "ipify indisponible"
+    elif ext_ip == ref_ip:
+        corrob = "ipify concordant"
+    else:
+        corrob = f"ipify divergent ({ext_ip}, chemin de sortie machine distinct)"
+    log.info(
+        "Changement d'IP WAN confirmé : %s → %s (source : %s, %s, stable %.0f s) — "
+        "alerte envoyée", last, ref_ip, source, corrob, elapsed
+    )
     cfg = db.get_all_config()
     if (cfg.get("alerts_enabled", "false").lower() == "true"
             and cfg.get("alert_ip_change", "true").lower() == "true"):
-        ok, msg = alert_mod.send_ip_change_alert(cfg, prev, ip)
+        ok, msg = alert_mod.send_ip_change_alert(cfg, last, ref_ip)
         if ok:
             log.info("Alerte de changement d'IP remise au serveur SMTP")
         else:
@@ -1479,6 +1613,10 @@ def route_external_ip():
         "external_ip": ext_ip,
         "same": bool(freebox_ip and ext_ip and freebox_ip == ext_ip),
         "checked_at": int(checked_at) if checked_at else None,
+        # Diagnostic : IP WAN de référence des alertes et candidate éventuelle en
+        # cours de debounce (cf. _check_external_ip). Champs purement additifs.
+        "wan_ip": _last_wan_ip or None,
+        "pending_wan_ip": _pending_wan_ip or None,
     })
 
 
