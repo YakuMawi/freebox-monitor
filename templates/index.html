@@ -747,6 +747,30 @@ header{display:flex;align-items:center;justify-content:space-between;
 </div>
 
 <!-- ═══════════════════════════════════════════
+     ÉVÉNEMENTS ROUTEUR (OMADA)
+═══════════════════════════════════════════ -->
+<div class="tile-section card" id="tile-router-events">
+  <div class="card-title" title="Événements de détection de lien WAN / bascule de secours du routeur ER8411, récupérés via l'API Omada OpenAPI. À corréler avec le journal des coupures ci-dessus : ces bascules n'affectent pas forcément la joignabilité de la Freebox.">Événements routeur (Omada)</div>
+  <table class="data-table">
+    <thead><tr><th>Horodatage</th><th>Niveau</th><th>Catégorie</th><th>Message</th></tr></thead>
+    <tbody id="router-events-body"></tbody>
+  </table>
+  <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <div style="display:flex;gap:6px;align-items:center">
+      <button class="btn" id="btn-router-events-prev" disabled>&#8249;</button>
+      <span id="router-events-page-info" style="font-size:12px;color:var(--text);font-weight:600;white-space:nowrap">Page 1</span>
+      <button class="btn" id="btn-router-events-next">&#8250;</button>
+      <select id="router-events-per-page" style="padding:4px 8px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;cursor:pointer">
+        <option value="5" selected>5 / page</option>
+        <option value="10">10 / page</option>
+        <option value="25">25 / page</option>
+        <option value="50">50 / page</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
      MODAL RAPPORT
 ═══════════════════════════════════════════ -->
 <div class="modal-backdrop" id="report-modal">
@@ -856,6 +880,7 @@ const TILES = [
   {id:'tile-ping',     label:'Ping'},
   {id:'tile-storage',  label:'Stockage'},
   {id:'tile-outages',  label:'Coupures'},
+  {id:'tile-router-events', label:'Événements routeur (Omada)'},
 ];
 const PREF_KEY = 'fbx_tiles_v2';
 
@@ -1473,6 +1498,37 @@ function editNote(id){
 }
 
 // ─────────────────────────────────────────
+// Événements routeur (Omada)
+// ─────────────────────────────────────────
+let routerEventsPage=1;
+let routerEventsPerPage=5;
+function updateRouterEvents(data){
+  const rows=data.items||[];
+  const total=data.total||0;
+  const tb=document.getElementById('router-events-body');
+  tb.innerHTML='';
+  if(!rows.length){
+    tb.innerHTML='<tr><td colspan="4" style="color:var(--muted)">Aucun événement routeur enregistré</td></tr>';
+  } else {
+    rows.forEach(ev=>{
+      const lvl=(ev.level||'').toLowerCase();
+      const lvlClass=lvl==='critical'||lvl==='error'?'badge-test-outage':(lvl==='warning'?'badge-real':'badge br');
+      tb.innerHTML+=`<tr>
+        <td>${esc(ev.ts_fmt||'—')}</td>
+        <td><span class="${lvlClass}">${esc(ev.level||'—')}</span></td>
+        <td style="font-size:11px;color:var(--muted)">${esc(ev.category||'—')}</td>
+        <td style="font-size:12px">${esc(ev.message||'—')}</td>
+      </tr>`;
+    });
+  }
+  const totalPages=Math.max(1,Math.ceil(total/routerEventsPerPage));
+  document.getElementById('router-events-page-info').textContent=
+    `Page ${routerEventsPage} / ${totalPages} — ${total} événement${total!==1?'s':''}`;
+  document.getElementById('btn-router-events-prev').disabled=routerEventsPage<=1;
+  document.getElementById('btn-router-events-next').disabled=routerEventsPage>=totalPages;
+}
+
+// ─────────────────────────────────────────
 // Report Modal
 // ─────────────────────────────────────────
 function openReportModal(){
@@ -1560,6 +1616,12 @@ async function fetchOutages(){
   const r=await fetch(`/api/outages?limit=${outagesPerPage}&offset=${offset}`);
   const data=await r.json();
   updateOutages(data);
+}
+async function fetchRouterEvents(){
+  const offset=(routerEventsPage-1)*routerEventsPerPage;
+  const r=await fetch(`/api/router-events?limit=${routerEventsPerPage}&offset=${offset}`);
+  const data=await r.json();
+  updateRouterEvents(data);
 }
 async function fetchCalendar(){
   const r=await fetch(`/api/calendar?year=${calYear}&month=${calMonth}`);
@@ -1841,6 +1903,7 @@ initCsrf().then(()=>checkUpdatePopup());
 fastRefresh();
 slowRefresh();
 fetchOutages();
+fetchRouterEvents();
 fetchCalendar();
 checkTestMode();
 fetchPingConfig();
@@ -1850,6 +1913,7 @@ fetchIPStatus();
 setInterval(fastRefresh, 10000);
 setInterval(slowRefresh, 60000);
 setInterval(fetchOutages, 120000);
+setInterval(fetchRouterEvents, 60000);
 setInterval(fetchIPStatus, 60000);
 
 // Forcer un re-check IP dès que le réseau revient ou que l'onglet devient visible
@@ -1891,6 +1955,11 @@ function toggleTilePanel(){
   _bind('btn-outages-next',     ()=>{ outagesPage++; fetchOutages(); });
   document.getElementById('outages-per-page').addEventListener('change',e=>{
     outagesPerPage=parseInt(e.target.value); outagesPage=1; fetchOutages();
+  });
+  _bind('btn-router-events-prev', ()=>{ routerEventsPage--; fetchRouterEvents(); });
+  _bind('btn-router-events-next', ()=>{ routerEventsPage++; fetchRouterEvents(); });
+  document.getElementById('router-events-per-page').addEventListener('change',e=>{
+    routerEventsPerPage=parseInt(e.target.value); routerEventsPage=1; fetchRouterEvents();
   });
   _bind('btn-ip-refresh',        ()=>refreshExternalIP());
   _bind('btn-ping',              ()=>doPing(true));

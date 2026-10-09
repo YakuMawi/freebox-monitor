@@ -14,7 +14,7 @@ from format_utils import fmt_dur as _fmt_dur
 
 log = logging.getLogger(__name__)
 
-ENCRYPTED_KEYS = {"smtp_password", "github_token"}
+ENCRYPTED_KEYS = {"smtp_password", "github_token", "omada_client_secret"}
 
 # Pourquoi les agrégations enveloppent certaines colonnes dans NULLIF(x, 0).
 #
@@ -170,6 +170,23 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_outages_start ON outages(started_at);
             CREATE INDEX IF NOT EXISTS idx_rate_limits   ON rate_limits(action, ip, ts);
             CREATE INDEX IF NOT EXISTS idx_ping_log_ts   ON ping_log(ts);
+            -- Événements du routeur ER8411 récupérés via l'API Omada OpenAPI
+            -- (détection de lien WAN, bascule de secours). Collecte périodique en
+            -- lecture seule depuis omada.py, totalement indépendante de la Freebox :
+            -- une indisponibilité de l'API Omada ne doit jamais affecter cette table
+            -- ni le reste de la collecte.
+            CREATE TABLE IF NOT EXISTS router_events (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts        INTEGER NOT NULL,        -- epoch seconds
+                level     TEXT    DEFAULT '',       -- Info | Warning | Error | Critical...
+                category  TEXT    DEFAULT '',       -- module Omada (System/Device/Client) ou clé du log
+                message   TEXT    NOT NULL DEFAULT '',
+                event_id  TEXT,                      -- id du log côté Omada, pour dédoublonnage
+                raw_json  TEXT    DEFAULT ''
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_router_events_event_id
+                ON router_events(event_id) WHERE event_id IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_router_events_ts ON router_events(ts);
         """)
         _migrate(c)
 
@@ -884,6 +901,40 @@ def get_api_error_summary(since_ts: int, until_ts: int = None) -> dict:
 def set_outage_external_ip(outage_id: int, ip: str):
     with _conn() as c:
         c.execute("UPDATE outages SET external_ip=? WHERE id=?", (ip, outage_id))
+
+
+def insert_router_event(ts: int, level: str, category: str, message: str,
+                         event_id: str = None, raw_json: str = "") -> bool:
+    """Insère un événement routeur (Omada OpenAPI). Retourne False si `event_id`
+    existe déjà (doublon silencieusement ignoré) plutôt que de lever une erreur :
+    la collecte périodique réinterroge volontairement une fenêtre de temps qui
+    recoupe le fetch précédent (voir omada.py), les doublons sont donc attendus."""
+    with _conn() as c:
+        try:
+            c.execute(
+                "INSERT INTO router_events(ts, level, category, message, event_id, raw_json) "
+                "VALUES(?,?,?,?,?,?)",
+                (ts, level or "", category or "", (message or "")[:1000],
+                 event_id, (raw_json or "")[:2000])
+            )
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+
+def get_router_events(limit: int = 50, offset: int = 0) -> dict:
+    with _conn() as c:
+        total = c.execute("SELECT COUNT(*) FROM router_events").fetchone()[0]
+        rows = c.execute(
+            "SELECT * FROM router_events ORDER BY ts DESC LIMIT ? OFFSET ?",
+            (limit, offset)
+        ).fetchall()
+    items = []
+    for r in rows:
+        d = dict(r)
+        d["ts_fmt"] = _ts_fmt(d.get("ts"))
+        items.append(d)
+    return {"items": items, "total": total}
 
 
 # _fmt_dur est désormais importé depuis format_utils (voir en-tête du fichier) —

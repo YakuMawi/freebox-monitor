@@ -129,6 +129,7 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
   <button class="tab-btn active" id="tab-btn-smtp">Alertes SMTP</button>
   <button class="tab-btn" id="tab-btn-webhooks">Webhooks</button>
   <button class="tab-btn" id="tab-btn-network">Réseau</button>
+  <button class="tab-btn" id="tab-btn-omada">Routeur (Omada)</button>
   <button class="tab-btn" id="tab-btn-update">Mise à jour</button>
   <button class="tab-btn" id="tab-btn-account">Compte</button>
 </div>
@@ -284,6 +285,56 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
 </div>
 
 <!-- ═══════════════════════════════════════
+     ONGLET ROUTEUR (OMADA)
+═══════════════════════════════════════ -->
+<div class="tab-content" id="tab-omada">
+  <div class="card">
+    <div class="card-title">Événements routeur ER8411 via Omada OpenAPI</div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:14px">
+      Récupère périodiquement (toutes les ~60s) les événements de détection de lien WAN et de
+      bascule de secours du contrôleur Omada Cloud/SDN, pour les afficher dans le dashboard à côté
+      du journal des coupures. Credentials créés dans le contrôleur Omada sous
+      <code>Global View &gt; Settings &gt; Platform Integration &gt; Open API</code> (application en mode Client).
+    </p>
+    <div class="form-row">
+      <div class="form-group">
+        <label>URL du connecteur</label>
+        <input type="text" id="omada_connector_url" placeholder="https://euw1-api-omada-controller-connector.tplinkcloud.com">
+      </div>
+      <div class="form-group">
+        <label>Omada ID (omadacId)</label>
+        <input type="text" id="omada_omadac_id" placeholder="32 caractères hexadécimaux">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Client ID</label>
+        <input type="text" id="omada_client_id" placeholder="Client ID de l'app Open API">
+      </div>
+      <div class="form-group">
+        <label>Client Secret</label>
+        <input type="password" id="omada_client_secret" placeholder="••••••••">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Device ID (ER8411)</label>
+        <input type="text" id="omada_device_id" placeholder="ID visible dans l'URL du dashboard Omada">
+      </div>
+      <div class="form-group">
+        <label>Site ID</label>
+        <input type="text" id="omada_site_id" placeholder="Résolu automatiquement si laissé vide">
+      </div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-primary" id="btn-omada-save">Enregistrer</button>
+      <button class="btn btn-outline" id="btn-omada-test">Tester la connexion</button>
+    </div>
+    <div class="alert" id="omada-result"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
      ONGLET MISE À JOUR
 ═══════════════════════════════════════ -->
 <div class="tab-content" id="tab-update">
@@ -392,7 +443,7 @@ header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var
 // Tab switching
 // ─────────────────────────────────────
 function switchTab(name){
-  ['smtp','webhooks','network','update','account'].forEach(n=>{
+  ['smtp','webhooks','network','omada','update','account'].forEach(n=>{
     document.getElementById('tab-btn-'+n).classList.toggle('active', n===name);
     document.getElementById('tab-'+n).classList.toggle('active', n===name);
   });
@@ -400,6 +451,7 @@ function switchTab(name){
   if(name==='smtp')     loadSmtpConfig();
   if(name==='webhooks') loadWebhooksConfig();
   if(name==='network')  loadNetworkConfig();
+  if(name==='omada')    loadOmadaConfig();
   if(name==='account')  loadAccount();
 }
 
@@ -567,6 +619,39 @@ async function saveNetworkConfig(){
   } else {
     showAlert('network-result', result.error||'Erreur de validation', 'err');
   }
+}
+
+// ─────────────────────────────────────
+// Omada (événements routeur)
+// ─────────────────────────────────────
+async function loadOmadaConfig(){
+  const r=await fetch('/api/config');
+  const cfg=await r.json();
+  ['omada_connector_url','omada_omadac_id','omada_client_id','omada_device_id','omada_site_id'].forEach(k=>{
+    const el=document.getElementById(k);
+    if(el) el.value=cfg[k]||'';
+  });
+  document.getElementById('omada_client_secret').value='';
+}
+
+async function saveOmada(){
+  const data={};
+  ['omada_connector_url','omada_omadac_id','omada_client_id','omada_device_id','omada_site_id'].forEach(k=>{
+    data[k]=document.getElementById(k).value.trim();
+  });
+  const secret=document.getElementById('omada_client_secret').value;
+  if(secret) data.omada_client_secret=secret;
+  await fetch('/api/config',{method:'POST',headers:_ch({'Content-Type':'application/json'}),body:JSON.stringify(data)});
+  showAlert('omada-result','Configuration enregistrée','ok');
+}
+
+async function testOmada(){
+  await saveOmada();
+  showAlert('omada-result','Test en cours...','info');
+  const r=await fetch('/api/config/test-omada',{method:'POST',headers:_ch({})});
+  const data=await r.json();
+  showAlert('omada-result', data.msg, data.ok?'ok':'err');
+  if(data.ok) loadOmadaConfig();  // reflète un site_id auto-résolu
 }
 
 // ─────────────────────────────────────
@@ -757,7 +842,7 @@ async function changePassword(){
 // Bind all event listeners (CSP: no inline onclick allowed)
 // ─────────────────────────────────────
 document.getElementById('theme-btn').addEventListener('click', ()=>toggleTheme());
-['smtp','webhooks','network','update','account'].forEach(name=>{
+['smtp','webhooks','network','omada','update','account'].forEach(name=>{
   document.getElementById('tab-btn-'+name).addEventListener('click', ()=>switchTab(name));
 });
 document.getElementById('email-chips-container').addEventListener('click', ()=>document.getElementById('email-chip-input').focus());
@@ -770,6 +855,8 @@ document.getElementById('btn-smtp-test').addEventListener('click', testSmtp);
 });
 document.getElementById('btn-wh-save').addEventListener('click', saveWebhooks);
 document.getElementById('btn-network-save').addEventListener('click', saveNetworkConfig);
+document.getElementById('btn-omada-save').addEventListener('click', saveOmada);
+document.getElementById('btn-omada-test').addEventListener('click', testOmada);
 document.getElementById('btn-update-save').addEventListener('click', saveUpdateConfig);
 document.getElementById('btn-update-check').addEventListener('click', checkUpdate);
 document.getElementById('btn-apply-update').addEventListener('click', applyUpdate);

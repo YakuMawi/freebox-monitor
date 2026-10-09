@@ -26,6 +26,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import db
 import alerts as alert_mod
 import updater
+import omada
 from format_utils import fmt_bytes, fmt_gb
 
 # ──────────────────────────────────────────────
@@ -1213,6 +1214,16 @@ def background_loop():
             _executor.submit(_bg_ping_box)
             _executor.submit(_bg_ping_dns_check)
 
+            # Événements routeur Omada (WAN detection / bascule) : même cadence que
+            # switch/storage (~60s), en lecture seule via le pool partagé. Isolé par
+            # try/except : une indisponibilité de l'API Omada Cloud ne doit jamais
+            # retarder ni casser le cycle de collecte Freebox ci-dessus.
+            if slow_counter % 6 == 0:
+                try:
+                    _executor.submit(omada.fetch_new_events)
+                except Exception as e:
+                    log.warning("omada: soumission de la collecte échouée: %s", e)
+
             # Weekly prune
             now = time.time()
             if now - _last_prune > 86400 * 7:
@@ -1424,6 +1435,8 @@ ALLOWED_CONFIG_KEYS = {
     "webhooks_enabled", "webhook_discord", "webhook_google_chat",
     "webhook_teams", "webhook_synology", "webhook_generic",
     "github_repo", "github_token", "port", "ping_target", "freebox_lan_ip",
+    "omada_client_id", "omada_client_secret", "omada_omadac_id",
+    "omada_connector_url", "omada_device_id", "omada_site_id",
 }
 
 _VALID_TARGET_RE = re.compile(r'^[a-zA-Z0-9.\-_:]{1,253}$')
@@ -1662,6 +1675,16 @@ def route_api_errors():
     return jsonify(db.get_api_errors(limit, offset))
 
 
+@app.route("/api/router-events")
+@login_required
+def route_router_events():
+    """Événements WAN du routeur ER8411 (détection de lien / bascule de secours),
+    récupérés périodiquement via l'API Omada OpenAPI (voir omada.py)."""
+    limit  = _int_arg("limit", 50, minimum=1, maximum=200)
+    offset = _int_arg("offset", 0, minimum=0)
+    return jsonify(db.get_router_events(limit, offset))
+
+
 @app.route("/api/csrf-token")
 @login_required
 def route_csrf_token():
@@ -1806,6 +1829,8 @@ def route_config_get():
         cfg["smtp_password"] = "••••••••" if cfg["smtp_password"] else ""
     if "github_token" in cfg:
         cfg["github_token"] = "••••••••" if cfg["github_token"] else ""
+    if "omada_client_secret" in cfg:
+        cfg["omada_client_secret"] = "••••••••" if cfg["omada_client_secret"] else ""
     return jsonify(cfg)
 
 
@@ -1817,7 +1842,7 @@ def route_config_post():
     for key, value in data.items():
         if key not in ALLOWED_CONFIG_KEYS:
             continue  # Ignore unknown / sensitive keys
-        if key in ("smtp_password", "github_token") and value == "••••••••":
+        if key in ("smtp_password", "github_token", "omada_client_secret") and value == "••••••••":
             continue  # Don't overwrite with redacted placeholder
         if key == "freebox_lan_ip":
             value = str(value).strip()
@@ -1844,6 +1869,20 @@ def route_test_webhook():
     webhook_type = data.get("type", "")
     cfg          = db.get_all_config()
     ok, msg      = alert_mod.send_test_webhook(cfg, webhook_type)
+    return jsonify({"ok": ok, "msg": msg})
+
+
+@app.route("/api/config/test-omada", methods=["POST"])
+@login_required
+@csrf_required
+def route_test_omada():
+    """Teste l'authentification + la lecture des logs d'alerte Omada de bout en
+    bout, avec les credentials actuellement enregistrés en base."""
+    try:
+        ok, msg = omada.test_connection()
+    except Exception as e:
+        log.error("omada: test de connexion échoué de façon inattendue: %s", e)
+        ok, msg = False, "Erreur interne — voir les logs serveur"
     return jsonify({"ok": ok, "msg": msg})
 
 
